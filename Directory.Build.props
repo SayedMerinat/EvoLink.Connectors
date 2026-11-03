@@ -1,0 +1,19 @@
+<Project>
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <LangVersion>14</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Authors>Sayed Mérinat</Authors>
+    <Company>EvoLink SA</Company>
+    <Product>EvoLink Connectors</Product>
+    <Version>0.1.0</Version>
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
+
+    <!-- Ortolan repository, side by side with this one. Override with /p:OrtolanRoot=... -->
+    <OrtolanRoot Condition="'$(OrtolanRoot)' == ''">$(MSBuildThisFileDirectory)..\Ortolan\</OrtolanRoot>
+
+    <!-- Folder where each connector is copied as an Ortolan plugin (plugins/<Name>/<Name>.dll). -->
+    <PluginsOutput Condition="'$(PluginsOutput)' == ''">$(MSBuildThisFileDirectory)artifacts\plugins\</PluginsOutput>
+  </PropertyGroup>
+</Project>

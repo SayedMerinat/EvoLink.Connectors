@@ -1,0 +1,28 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!-- The M-Files COM API only exists on Windows: the windows TFM selects the net5.0-windows asset of the interop package. -->
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <RootNamespace>EvoLink.Connectors.MFiles</RootNamespace>
+    <Description>Connecteur M-Files natif pour Ortolan (API COM) : lecture, synchronisation, recherche d'utilisateurs et d'éléments de listes de valeurs.</Description>
+    <IsOrtolanPlugin>true</IsOrtolanPlugin>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!--
+      EmbedInteropTypes stays false (default of a PackageReference, also enforced by the build targets of the package):
+      embedding would give the COM types a different identity in every assembly. Interop.MFilesAPI.dll is therefore copied
+      next to the plugin and loaded in its AssemblyLoadContext.
+    -->
+    <PackageReference Include="Interop.MFilesAPI" Version="25.10.8" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\EvoLink.Connectors.Common\EvoLink.Connectors.Common.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="EvoLink.Connectors.MFiles.Tests" />
+  </ItemGroup>
+
+</Project>

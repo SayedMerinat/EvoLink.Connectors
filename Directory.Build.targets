@@ -1,0 +1,36 @@
+<Project>
+
+  <!--
+    Connectors (IsOrtolanPlugin = true) are loaded by the Ortolan server in their own AssemblyLoadContext:
+    Ortolan.Core is shared with the host (not copied), every other dependency is copied next to the plugin.
+  -->
+  <PropertyGroup Condition="'$(IsOrtolanPlugin)' == 'true'">
+    <EnableDynamicLoading>true</EnableDynamicLoading>
+  </PropertyGroup>
+
+  <!-- Plugins and the libraries they use (IsOrtolanLibrary) reference Ortolan.Core without copying it; tests copy it. -->
+  <PropertyGroup>
+    <_ShareOrtolanCore Condition="'$(IsOrtolanPlugin)' == 'true' or '$(IsOrtolanLibrary)' == 'true'">true</_ShareOrtolanCore>
+  </PropertyGroup>
+
+  <ItemGroup Condition="'$(_ShareOrtolanCore)' == 'true' or '$(UsesOrtolanCore)' == 'true'">
+    <ProjectReference Include="$(OrtolanRoot)src\Ortolan.Core\Ortolan.Core.csproj">
+      <Private Condition="'$(_ShareOrtolanCore)' == 'true'">false</Private>
+      <ExcludeAssets Condition="'$(_ShareOrtolanCore)' == 'true'">runtime</ExcludeAssets>
+    </ProjectReference>
+  </ItemGroup>
+
+  <!-- Shared assemblies of the host must never be copied with a plugin (type identity). -->
+  <ItemGroup Condition="'$(IsOrtolanPlugin)' == 'true'">
+    <PackageReference Update="Newtonsoft.Json" ExcludeAssets="runtime" />
+    <PackageReference Update="EvoLink.Logging" ExcludeAssets="runtime" />
+  </ItemGroup>
+
+  <Target Name="CopyOrtolanPlugin" AfterTargets="Build" Condition="'$(IsOrtolanPlugin)' == 'true'">
+    <ItemGroup>
+      <_PluginFiles Include="$(OutDir)**\*.*" Exclude="$(OutDir)**\*.pdb.tmp" />
+    </ItemGroup>
+    <Copy SourceFiles="@(_PluginFiles)" DestinationFiles="@(_PluginFiles->'$(PluginsOutput)$(AssemblyName)\%(RecursiveDir)%(Filename)%(Extension)')" SkipUnchangedFiles="true" />
+  </Target>
+
+</Project>

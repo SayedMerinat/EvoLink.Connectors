@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>EvoLink.Connectors.Common</RootNamespace>
+    <Description>Outils partagés par les connecteurs Ortolan : conversion des valeurs, correspondance des champs, classification des erreurs.</Description>
+    <IsOrtolanLibrary>true</IsOrtolanLibrary>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="EvoLink.Connectors.Common.Tests" />
+  </ItemGroup>
+
+</Project>

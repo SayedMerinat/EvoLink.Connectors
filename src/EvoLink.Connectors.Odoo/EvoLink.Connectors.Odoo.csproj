@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>EvoLink.Connectors.Odoo</RootNamespace>
+    <Description>Connecteur Odoo 17 natif pour Ortolan (client JSON-RPC) : lecture, synchronisation et recherche d'identifiants.</Description>
+    <IsOrtolanPlugin>true</IsOrtolanPlugin>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\EvoLink.Connectors.Common\EvoLink.Connectors.Common.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="EvoLink.Connectors.Odoo.Tests" />
+  </ItemGroup>
+
+</Project>

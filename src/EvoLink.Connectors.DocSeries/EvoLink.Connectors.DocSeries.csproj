@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>EvoLink.Connectors.DocSeries</RootNamespace>
+    <Description>Connecteur DocSeries natif pour Ortolan : création de documents (métadonnées, listes, fichier joint) via EvoLink.DocSeries.API.</Description>
+    <IsOrtolanPlugin>true</IsOrtolanPlugin>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="EvoLink.DocSeries.API" Version="1.1.0" />
+    <!-- Shared with the host (Directory.Build.targets excludes its runtime asset): not copied with the plugin. -->
+    <PackageReference Include="Newtonsoft.Json" Version="13.0.4" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\EvoLink.Connectors.Common\EvoLink.Connectors.Common.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="EvoLink.Connectors.DocSeries.Tests" />
+  </ItemGroup>
+
+</Project>

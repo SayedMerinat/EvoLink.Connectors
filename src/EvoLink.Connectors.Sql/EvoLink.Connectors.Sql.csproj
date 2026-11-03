@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>EvoLink.Connectors.Sql</RootNamespace>
+    <Description>Connecteur SQL d'Ortolan : lecture et synchronisation de tables SQL Server, MySQL, ODBC, OleDB et SQLite.</Description>
+    <IsOrtolanPlugin>true</IsOrtolanPlugin>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Data.SqlClient" Version="6.1.4" />
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.14" />
+    <PackageReference Include="MySql.Data" Version="9.6.0" />
+    <PackageReference Include="System.Data.Odbc" Version="10.0.3" />
+    <PackageReference Include="System.Data.OleDb" Version="10.0.3" />
+    <!-- Patched version of a transitive dependency of SqlClient / MySql.Data (GHSA-846f-f764-76mx). -->
+    <PackageReference Include="System.Security.Cryptography.Pkcs" Version="10.0.14" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\EvoLink.Connectors.Common\EvoLink.Connectors.Common.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="EvoLink.Connectors.Sql.Tests" />
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>EvoLink.Connectors.Transformers</RootNamespace>
+    <Description>Transformers et conditions d'EvoBus portés nativement pour Ortolan (arithmétique, hachage, informations de fichier, expressions régulières, table de correspondance CSV, branchements...).</Description>
+    <IsOrtolanPlugin>true</IsOrtolanPlugin>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\EvoLink.Connectors.Common\EvoLink.Connectors.Common.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="EvoLink.Connectors.Transformers.Tests" />
+  </ItemGroup>
+
+</Project>

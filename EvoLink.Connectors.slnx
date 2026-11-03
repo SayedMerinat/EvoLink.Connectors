@@ -1,0 +1,24 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/EvoLink.Connectors.Common/EvoLink.Connectors.Common.csproj" />
+    <Project Path="src/EvoLink.Connectors.Sql/EvoLink.Connectors.Sql.csproj" />
+    <Project Path="src/EvoLink.Connectors.Odoo/EvoLink.Connectors.Odoo.csproj" />
+    <Project Path="src/EvoLink.Connectors.MFiles/EvoLink.Connectors.MFiles.csproj" />
+    <Project Path="src/EvoLink.Connectors.DocSeries/EvoLink.Connectors.DocSeries.csproj" />
+    <Project Path="src/EvoLink.Connectors.Transformers/EvoLink.Connectors.Transformers.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/EvoLink.Connectors.Common.Tests/EvoLink.Connectors.Common.Tests.csproj" />
+    <Project Path="tests/EvoLink.Connectors.Sql.Tests/EvoLink.Connectors.Sql.Tests.csproj" />
+    <Project Path="tests/EvoLink.Connectors.Odoo.Tests/EvoLink.Connectors.Odoo.Tests.csproj" />
+    <Project Path="tests/EvoLink.Connectors.MFiles.Tests/EvoLink.Connectors.MFiles.Tests.csproj" />
+    <Project Path="tests/EvoLink.Connectors.DocSeries.Tests/EvoLink.Connectors.DocSeries.Tests.csproj" />
+    <Project Path="tests/EvoLink.Connectors.Transformers.Tests/EvoLink.Connectors.Transformers.Tests.csproj" />
+  </Folder>
+  <Folder Name="/Solution Items/">
+    <File Path="Directory.Build.props" />
+    <File Path="Directory.Build.targets" />
+    <File Path="README.md" />
+    <File Path="docs/CONVENTIONS.md" />
+  </Folder>
+</Solution>
