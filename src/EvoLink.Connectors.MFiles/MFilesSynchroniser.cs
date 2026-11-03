@@ -23,6 +23,7 @@ namespace EvoLink.Connectors.MFiles
     public class MFilesSynchroniser : SynchroniserModule, IMFilesConnectionOptions
     {
         private readonly Dictionary<Entity, MFilesObject> _objects = new(ReferenceEqualityComparer.Instance);
+        private readonly Dictionary<Entity, List<Entity>> _groupedFiles = new(ReferenceEqualityComparer.Instance);
         private MFilesSession? _session;
         private MFilesClassInfo? _class;
         private MFilesFieldMap? _map;
@@ -86,6 +87,9 @@ namespace EvoLink.Connectors.MFiles
         [Description("Propriété de l'entité contenant le chemin du fichier à joindre.")]
         public string FilePathProperty { get; set; } = MFilesKeys.FilePath;
 
+        [Description("Regroupe en un seul document multi-fichiers les entités qui ont la même valeur pour cette propriété (ex. BatchID, comme EvoBus) : la première porte les propriétés et la clé, les fichiers des autres sont joints à sa création.")]
+        public string? GroupFilesBy { get; set; }
+
         [Description("Applique le créateur, le dernier modificateur et leurs dates à partir des propriétés de l'entité (opérations administratives).")]
         public bool SetAuditInfo { get; set; }
 
@@ -109,6 +113,44 @@ namespace EvoLink.Connectors.MFiles
         /// <summary>Creates the gateway to the vault (overridden by the tests).</summary>
         protected virtual IMFilesGateway CreateGateway(MFilesConnectionSettings settings)
             => new ComMFilesGateway(settings);
+
+        public override async Task<List<Entity>> ActAsync(List<Entity> input, JobContext context)
+        {
+            _groupedFiles.Clear();
+
+            if (string.IsNullOrWhiteSpace(GroupFilesBy))
+                return await base.ActAsync(input, context);
+
+            // The members of a group are not synchronised themselves: their files are attached to the first entity of the group.
+            var members = new Dictionary<Entity, Entity>(ReferenceEqualityComparer.Instance);
+
+            var groups = input
+                .Where(e => !e.IsFailed && e.SyncAction != SyncAction.Delete && !string.IsNullOrEmpty(ValueConverter.ToText(e.GetValueOrDefault(GroupFilesBy))))
+                .GroupBy(e => ValueConverter.ToText(e.GetValueOrDefault(GroupFilesBy))!, StringComparer.Ordinal)
+                .Where(g => g.Count() > 1);
+
+            foreach (var group in groups)
+            {
+                var leader = group.First();
+                _groupedFiles[leader] = group.Skip(1).ToList();
+
+                foreach (var member in _groupedFiles[leader])
+                    members[member] = leader;
+            }
+
+            var output = await base.ActAsync(input.Where(e => !members.ContainsKey(e)).ToList(), context);
+
+            foreach (var (member, leader) in members)
+            {
+                member.SyncResult = leader.SyncResult == SyncResult.Created ? SyncResult.Created : leader.SyncResult is SyncResult.Failed ? SyncResult.Failed : SyncResult.Unchanged;
+                member.Error = leader.Error;
+
+                if (leader.Metadata.TryGetValue(MFilesKeys.MetadataObjectId, out var objectId))
+                    member.Metadata[MFilesKeys.MetadataObjectId] = objectId;
+            }
+
+            return [.. output, .. members.Keys];
+        }
 
         protected override Task OpenAsync(JobContext context)
         {
@@ -151,11 +193,16 @@ namespace EvoLink.Connectors.MFiles
             var values = BuildValues(source, null, context).Where(v => v.Value != null).ToList();
             var file = GetFile(source, context);
 
-            if (file != null)
+            var additionalFiles = _groupedFiles.TryGetValue(source, out var members)
+                ? members.Select(m => GetFile(m, context)).OfType<MFilesFile>().ToList()
+                : [];
+
+            // The name of a multi-file document is not taken from its first file.
+            if (file != null && additionalFiles.Count == 0)
                 values = ApplyFileName(values, file);
 
             var audit = BuildAudit(source, creation: true, context);
-            var created = Call(() => Session.Gateway.Create(new MFilesCreateRequest(_class!.ObjectType, _class.Id, values, file, audit)));
+            var created = Call(() => Session.Gateway.Create(new MFilesCreateRequest(_class!.ObjectType, _class.Id, values, file, audit, additionalFiles)));
 
             Complete(source, created);
             return Task.FromResult(source);
@@ -248,6 +295,10 @@ namespace EvoLink.Connectors.MFiles
                 return true;
 
             if (!string.IsNullOrWhiteSpace(ObjectIdProperty) && string.Equals(property, ObjectIdProperty, StringComparison.OrdinalIgnoreCase))
+                return true;
+
+            // The grouping property is technical (EvoBus BatchID): written only when explicitly mapped.
+            if (!string.IsNullOrWhiteSpace(GroupFilesBy) && string.Equals(property, GroupFilesBy, StringComparison.OrdinalIgnoreCase) && !map.IsMapped(property))
                 return true;
 
             return !map.IsMapped(property) && property.StartsWith(MFilesKeys.FilePrefix, StringComparison.OrdinalIgnoreCase);

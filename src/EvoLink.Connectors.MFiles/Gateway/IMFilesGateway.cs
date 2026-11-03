@@ -119,5 +119,10 @@ namespace EvoLink.Connectors.MFiles.Gateway
         public bool IsEmpty => !HasCreationInfo && !HasModificationInfo;
     }
 
-    public sealed record MFilesCreateRequest(int ObjectType, int ClassId, IReadOnlyList<MFilesPropertyValue> Values, MFilesFile? File = null, MFilesAuditInfo? Audit = null);
+    public sealed record MFilesCreateRequest(int ObjectType, int ClassId, IReadOnlyList<MFilesPropertyValue> Values, MFilesFile? File = null, MFilesAuditInfo? Audit = null,
+        IReadOnlyList<MFilesFile>? AdditionalFiles = null)
+    {
+        /// <summary>Every file of the new object (several files make a multi-file document).</summary>
+        public IReadOnlyList<MFilesFile> AllFiles => [.. File == null ? [] : new[] { File }, .. AdditionalFiles ?? []];
+    }
 }

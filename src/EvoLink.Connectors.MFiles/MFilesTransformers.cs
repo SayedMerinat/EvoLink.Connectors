@@ -315,4 +315,21 @@ namespace EvoLink.Connectors.MFiles
             return Task.FromResult<Entity?>(entity);
         }
     }
+
+    /// <summary>
+    /// Searches in a class the object whose <see cref="MFilesUserLookup.MatchField"/> equals a property of the entity and writes its ID
+    /// (native equivalent of the ObjectLookupTransformer of EvoBus).
+    /// </summary>
+    [OrtolanType("mfiles-object-lookup")]
+    [Description("Recherche dans une classe M-Files l'objet dont un champ vaut une propriété de l'entité et écrit son ID (équivalent d'ObjectLookupTransformer d'EvoBus).")]
+    public class MFilesObjectLookup : MFilesUserLookup
+    {
+        protected override void ValidateConfiguration()
+        {
+            base.ValidateConfiguration();
+
+            if (!string.IsNullOrWhiteSpace(UserField))
+                throw ConnectorGuard.Invalid(DisplayName, "userField n'est pas utilisé par mfiles-object-lookup : utilisez mfiles-user-lookup pour lire un compte utilisateur.");
+        }
+    }
 }

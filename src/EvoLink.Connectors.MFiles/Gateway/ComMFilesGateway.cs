@@ -172,8 +172,8 @@ namespace EvoLink.Connectors.MFiles.Gateway
                 values.Add(-1, Property(BuiltInClassPropertyDef, MFilesDataType.Lookup, new MFilesLookup(request.ClassId)));
 
                 var files = new SourceObjectFiles();
-                if (request.File != null)
-                    files.AddFile(request.File.Title, request.File.Extension, request.File.Path);
+                foreach (var file in request.AllFiles)
+                    files.AddFile(file.Title, file.Extension, file.Path);
 
                 var checkInNow = request.Audit == null || request.Audit.IsEmpty;
                 var created = Vault.ObjectOperations.CreateNewObjectEx(request.ObjectType, values, files, SFD: files.Count == 1, CheckIn: checkInNow);
