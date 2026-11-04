@@ -139,6 +139,18 @@ namespace EvoLink.Connectors.MFiles.Tests
         }
 
         [Fact]
+        public async Task NotFound_WithClearWhenNotFound_EmptiesTheDestination()
+        {
+            var logger = new CapturingLogger();
+            var output = await Lookup(l => l.ClearWhenNotFound = true).ActAsync([V.Entity(("Auteur", "inconnu@client.ch"))], V.Context(logger: logger));
+
+            Assert.NotEqual(SyncResult.Failed, output[0].SyncResult);
+            Assert.True(output[0].Has("Auteur"));
+            Assert.Null(output[0]["Auteur"]);
+            Assert.Contains(logger.Warnings, w => w.Contains("vidée"));
+        }
+
+        [Fact]
         public async Task SameValue_IsSearchedOnce()
         {
             var entities = Enumerable.Range(0, 20).Select(_ => V.Entity(("Auteur", "j.doe@client.ch"))).ToList();
@@ -209,6 +221,10 @@ namespace EvoLink.Connectors.MFiles.Tests
 
             var created = await Lookup(l => l.CreateMissing = true).ActAsync([V.Entity(("Pays", "Italie"))], V.Context());
             Assert.Equal(4L, created[0]["Pays"]);
+
+            var cleared = await Lookup(l => l.ClearWhenNotFound = true).ActAsync([V.Entity(("Pays", "Espagne"))], V.Context());
+            Assert.Null(cleared[0]["Pays"]);
+            Assert.NotEqual(SyncResult.Failed, cleared[0].SyncResult);
         }
 
         [Fact]

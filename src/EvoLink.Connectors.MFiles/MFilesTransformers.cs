@@ -81,14 +81,25 @@ namespace EvoLink.Connectors.MFiles
         protected override Exception? TranslateAccessFailure(Exception exception)
             => MFilesErrors.IsConnectionFailure(exception) ? Unavailable(exception) : null;
 
-        /// <summary>Business "not found": warning, and failure of the entity when <paramref name="fail"/> is true.</summary>
-        protected Entity NotFound(Entity entity, string message, bool fail, JobContext context)
+        /// <summary>
+        /// Business "not found": failure of the entity when <paramref name="fail"/> is true, otherwise a warning, and
+        /// <paramref name="clear"/> (the property that should have received the result) emptied when given.
+        /// </summary>
+        protected Entity NotFound(Entity entity, string message, bool fail, JobContext context, string? clear = null)
         {
-            context.LogWarning($"[{DisplayName}] {message}");
-
             if (fail)
+            {
+                context.LogWarning($"[{DisplayName}] {message}");
                 throw new MFilesValueNotFoundException(message);
+            }
 
+            if (clear != null)
+            {
+                entity[clear] = null;
+                message += $" Propriété '{clear}' vidée.";
+            }
+
+            context.LogWarning($"[{DisplayName}] {message}");
             return entity;
         }
 
@@ -133,6 +144,11 @@ namespace EvoLink.Connectors.MFiles
         [Description("Met l'entité en échec lorsqu'aucun objet (ou plusieurs) ou aucun compte n'est trouvé (sinon simple avertissement).")]
         public bool FailWhenNotFound { get; set; }
 
+        [Description("Vide la propriété qui devait recevoir l'ID lorsque rien n'est trouvé, au lieu d'y laisser la valeur recherchée (l'entité est alors écrite sans cette valeur).")]
+        public bool ClearWhenNotFound { get; set; }
+
+        private string Destination => string.IsNullOrWhiteSpace(IdProperty) ? SourceProperty : IdProperty;
+
         protected override void ValidateConfiguration()
             => ConnectorGuard.Required(DisplayName, ("vault", Vault), ("class", Class), ("sourceProperty", SourceProperty), ("matchField", MatchField));
 
@@ -160,13 +176,13 @@ namespace EvoLink.Connectors.MFiles
             var result = _results.GetOrAdd(value, Search);
 
             if (result.Error != null)
-                return Task.FromResult<Entity?>(NotFound(entity, result.Error, FailWhenNotFound, context));
+                return Task.FromResult<Entity?>(NotFound(entity, result.Error, FailWhenNotFound, context, ClearWhenNotFound ? Destination : null));
 
             // Without its user account, the object found is not usable: the entity is left untouched.
             if (_user != null && result.Login == null)
-                return Task.FromResult<Entity?>(NotFound(entity, result.UserError!, FailWhenNotFound, context));
+                return Task.FromResult<Entity?>(NotFound(entity, result.UserError!, FailWhenNotFound, context, ClearWhenNotFound ? Destination : null));
 
-            entity[string.IsNullOrWhiteSpace(IdProperty) ? SourceProperty : IdProperty] = (long)result.ObjectId;
+            entity[Destination] = (long)result.ObjectId;
 
             if (result.Login != null)
             {
@@ -258,6 +274,9 @@ namespace EvoLink.Connectors.MFiles
         [Description("Met l'entité en échec lorsqu'un élément est introuvable (sinon avertissement et entité inchangée).")]
         public bool FailWhenNotFound { get; set; }
 
+        [Description("Vide la propriété qui devait recevoir l'ID lorsqu'un élément est introuvable, au lieu d'y laisser le nom recherché.")]
+        public bool ClearWhenNotFound { get; set; }
+
         protected override void ValidateConfiguration()
         {
             ConnectorGuard.Required(DisplayName, ("vault", Vault), ("sourceProperty", SourceProperty));
@@ -309,7 +328,8 @@ namespace EvoLink.Connectors.MFiles
             }
 
             if (missing.Count > 0)
-                return Task.FromResult<Entity?>(NotFound(entity, $"Élément(s) {string.Join(", ", missing.Select(m => $"'{m}'"))} introuvable(s) dans la liste de valeurs '{_valueListName}'.", FailWhenNotFound, context));
+                return Task.FromResult<Entity?>(NotFound(entity, $"Élément(s) {string.Join(", ", missing.Select(m => $"'{m}'"))} introuvable(s) dans la liste de valeurs '{_valueListName}'.", FailWhenNotFound, context,
+                    ClearWhenNotFound ? (string.IsNullOrWhiteSpace(TargetProperty) ? SourceProperty : TargetProperty) : null));
 
             entity[string.IsNullOrWhiteSpace(TargetProperty) ? SourceProperty : TargetProperty] = multiple ? ids : ids.FirstOrDefault();
             return Task.FromResult<Entity?>(entity);
