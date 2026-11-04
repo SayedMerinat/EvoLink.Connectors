@@ -39,6 +39,7 @@ namespace EvoLink.Connectors.MFiles
     {
         public const string DefaultProtocol = "ncacn_ip_tcp";
         public const int DefaultPort = 2266;
+        public const int GrpcPort = 7766;
 
         public static MFilesConnectionSettings From(IMFilesConnectionOptions options)
             => new(string.IsNullOrWhiteSpace(options.Server) ? "localhost" : options.Server.Trim(),
@@ -63,6 +64,28 @@ namespace EvoLink.Connectors.MFiles
 
             if (options.Port is < 0 or > 65535)
                 throw ConnectorGuard.Invalid(module, $"Port M-Files invalide : {options.Port}.");
+        }
+
+        /// <summary>
+        /// Hint added to a connection failure when the port doesn't match the protocol (a frequent mistake: 7766, the gRPC port,
+        /// with ncacn_ip_tcp). Empty when the pair is the standard one.
+        /// </summary>
+        public string EndpointHint
+        {
+            get
+            {
+                var grpc = Protocol.Equals("grpc", StringComparison.OrdinalIgnoreCase);
+                var tcp = Protocol.Equals(DefaultProtocol, StringComparison.OrdinalIgnoreCase);
+
+                if (tcp && Port == GrpcPort)
+                    return $" Le port {GrpcPort} est celui de gRPC : avec le protocole {DefaultProtocol}, le port standard est {DefaultPort} (ou retirez 'port').";
+                if (grpc && Port == DefaultPort)
+                    return $" Le port {DefaultPort} est celui de {DefaultProtocol} : avec le protocole grpc, le port standard est {GrpcPort}.";
+                if ((tcp && Port != DefaultPort) || (grpc && Port != GrpcPort))
+                    return $" Vérifiez le port {Port} (standard pour {Protocol} : {(tcp ? DefaultPort : GrpcPort)}).";
+
+                return string.Empty;
+            }
         }
 
         /// <summary>Server and vault, for the messages (never the credentials).</summary>

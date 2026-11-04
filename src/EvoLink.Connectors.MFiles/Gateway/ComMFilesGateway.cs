@@ -76,7 +76,7 @@ namespace EvoLink.Connectors.MFiles.Gateway
             {
                 // Every failure of the connection phase (server stopped, authentication refused, protocol...) is an unavailability.
                 Release();
-                throw new MFilesConnectionException($"Connexion au coffre M-Files {_settings.Display} impossible : {MFilesErrors.ReadableMessage(ex)}", ex);
+                throw new MFilesConnectionException($"Connexion au coffre M-Files {_settings.Display} impossible : {MFilesErrors.ReadableMessage(ex)}{_settings.EndpointHint}", ex);
             }
         }
 

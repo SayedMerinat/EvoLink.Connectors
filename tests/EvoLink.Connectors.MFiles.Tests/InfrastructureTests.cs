@@ -9,6 +9,27 @@ using Ortolan.Core.Serialization;
 
 namespace EvoLink.Connectors.MFiles.Tests
 {
+    public class ConnectionSettingsTests
+    {
+        [Theory]
+        [InlineData("ncacn_ip_tcp", 2266, false)]
+        [InlineData("grpc", 7766, false)]
+        [InlineData("ncacn_http", 80, false)]
+        [InlineData("ncacn_ip_tcp", 7766, true)]
+        [InlineData("grpc", 2266, true)]
+        [InlineData("ncacn_ip_tcp", 1234, true)]
+        public void EndpointHint_FlagsAPortThatDoesntMatchTheProtocol(string protocol, int port, bool expected)
+        {
+            var settings = new MFilesConnectionSettings("srv", protocol, port, "vault", MFilesAuthType.CurrentWindowsUser, null, null, null);
+
+            Assert.Equal(expected, settings.EndpointHint.Length > 0);
+        }
+
+        [Fact]
+        public void EndpointHint_GrpcPortWithTcp_PointsToTheStandardPort()
+            => Assert.Contains("2266", new MFilesConnectionSettings("srv", "ncacn_ip_tcp", 7766, "vault", MFilesAuthType.CurrentWindowsUser, null, null, null).EndpointHint);
+    }
+
     public class SessionCacheTests
     {
         [Fact]
