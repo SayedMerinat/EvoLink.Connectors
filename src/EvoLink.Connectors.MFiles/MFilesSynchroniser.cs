@@ -194,7 +194,7 @@ namespace EvoLink.Connectors.MFiles
             var file = GetFile(source, context);
 
             var additionalFiles = _groupedFiles.TryGetValue(source, out var members)
-                ? members.Select(m => GetFile(m, context)).OfType<MFilesFile>().ToList()
+                ? UniqueFiles(file, members.Select(m => GetFile(m, context)).OfType<MFilesFile>(), context)
                 : [];
 
             // The name of a multi-file document is not taken from its first file.
@@ -317,6 +317,46 @@ namespace EvoLink.Connectors.MFiles
 
             return new MFilesFile(path, Path.GetFileNameWithoutExtension(path), Path.GetExtension(path).TrimStart('.'));
         }
+
+        /// <summary>
+        /// Files of a multi-file document, whose names must be unique in M-Files: a path already attached is attached once,
+        /// a different file with a name already used is renamed "name (2)", "name (3)"...
+        /// </summary>
+        private List<MFilesFile> UniqueFiles(MFilesFile? first, IEnumerable<MFilesFile> others, JobContext context)
+        {
+            var paths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var result = new List<MFilesFile>();
+
+            if (first != null)
+            {
+                paths.Add(Path.GetFullPath(first.Path));
+                names.Add(FileName(first.Title, first.Extension));
+            }
+
+            foreach (var file in others)
+            {
+                if (!paths.Add(Path.GetFullPath(file.Path)))
+                {
+                    context.LogWarning($"[{DisplayName}] Fichier '{file.Path}' présent plusieurs fois dans le groupe : joint une seule fois.");
+                    continue;
+                }
+
+                var title = file.Title;
+                for (var index = 2; !names.Add(FileName(title, file.Extension)); index++)
+                    title = $"{file.Title} ({index})";
+
+                if (title != file.Title)
+                    context.LogWarning($"[{DisplayName}] Nom de fichier '{FileName(file.Title, file.Extension)}' déjà utilisé dans le document : '{file.Path}' est joint sous le nom '{FileName(title, file.Extension)}'.");
+
+                result.Add(file with { Title = title });
+            }
+
+            return result;
+        }
+
+        private static string FileName(string title, string extension)
+            => string.IsNullOrEmpty(extension) ? title : $"{title}.{extension}";
 
         /// <summary>The name of a single-file document defaults to the file name, without repeating its extension.</summary>
         private List<MFilesPropertyValue> ApplyFileName(List<MFilesPropertyValue> values, MFilesFile file)

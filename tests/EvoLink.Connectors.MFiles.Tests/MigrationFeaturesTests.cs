@@ -58,6 +58,38 @@ namespace EvoLink.Connectors.MFiles.Tests
         }
 
         [Fact]
+        public async Task GroupFilesBy_SamePathAttachedOnce_AndSameNameRenamed()
+        {
+            var directory = Path.Combine(Path.GetTempPath(), $"mfiles-group-{Guid.NewGuid():N}");
+            Directory.CreateDirectory(Path.Combine(directory, "autre"));
+
+            try
+            {
+                var path = Path.Combine(directory, "a.pdf");
+                var homonym = Path.Combine(directory, "autre", "a.pdf");
+                File.WriteAllText(path, "a");
+                File.WriteAllText(homonym, "autre a");
+
+                var logger = new CapturingLogger();
+                var first = V.Entity(("Numéro", "F-1"), ("BatchID", "lot-1"), (MFilesKeys.FilePath, path));
+                var duplicate = V.Entity(("Numéro", "F-1"), ("BatchID", "lot-1"), (MFilesKeys.FilePath, path));
+                var sameName = V.Entity(("Numéro", "F-1"), ("BatchID", "lot-1"), (MFilesKeys.FilePath, homonym));
+
+                var output = await Synchroniser(s => s.GroupFilesBy = "BatchID").ActAsync([first, duplicate, sameName], V.Context(logger: logger));
+
+                var request = Assert.Single(_vault.Creates);
+                Assert.Equal([path, homonym], request.AllFiles.Select(f => f.Path));
+                Assert.Equal(["a", "a (2)"], request.AllFiles.Select(f => f.Title));
+                Assert.All(output, e => Assert.Equal(SyncResult.Created, e.SyncResult));
+                Assert.Equal(2, logger.Warnings.Count());
+            }
+            finally
+            {
+                Directory.Delete(directory, recursive: true);
+            }
+        }
+
+        [Fact]
         public async Task ObjectLookup_WritesTheObjectId_AndRefusesAUserField()
         {
             var contact = _vault.AddObject(V.ContactClass, (V.ExternalLogin, "j.doe@client.ch"));
