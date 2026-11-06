@@ -280,6 +280,20 @@ namespace EvoLink.Connectors.MFiles.Tests
         }
 
         [Fact]
+        public async Task Create_MissingFile_WithoutRequireFile_CreatesTheObjectWithoutFile()
+        {
+            var logger = new CapturingLogger();
+            var missing = V.Entity(("Numéro", "F-1"), (MFilesKeys.FilePath, @"C:\nulle\part\absent.pdf"));
+            var noPath = V.Entity(("Numéro", "F-2"));
+
+            var output = await Synchroniser(s => s.RequireFile = false).ActAsync([missing, noPath], V.Context(logger: logger));
+
+            Assert.All(output, e => Assert.Equal(SyncResult.Created, e.SyncResult));
+            Assert.All(_vault.Creates, r => Assert.Empty(r.AllFiles));
+            Assert.Contains(logger.Warnings, w => w.Contains("absent.pdf"));
+        }
+
+        [Fact]
         public async Task AuditInfo_IsResolvedFromTheLogins()
         {
             var created = new DateTime(2020, 1, 2, 3, 4, 5, DateTimeKind.Utc);

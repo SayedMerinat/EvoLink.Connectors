@@ -345,6 +345,27 @@ namespace EvoLink.Connectors.Transformers.Tests
             Assert.False(lenient.Has(FileKeys.ByteSize));
         }
 
+        [Fact]
+        public async Task FileInfo_EmptyPathOrOutsideTheRoot_FailsOnlyWhenTheFileIsRequired()
+        {
+            Assert.True((await new FileInfoTransformer().ActOneAsync(Entity((FileKeys.FilePath, " ")))).IsFailed);
+
+            var empty = await new FileInfoTransformer { RequireFile = false }.ActOneAsync(Entity((FileKeys.FilePath, "")));
+            Assert.False(empty.IsFailed);
+            Assert.False(empty.Has(FileKeys.Name));
+
+            var noProperty = await new FileInfoTransformer { RequireFile = false }.ActOneAsync(Entity(("autre", "x")));
+            Assert.False(noProperty.IsFailed);
+
+            var outside = Path.Combine(Path.GetTempPath(), "ailleurs", "a.txt");
+            var root = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+            Assert.True((await new FileInfoTransformer { RelativeRoot = root }.ActOneAsync(Entity((FileKeys.FilePath, outside)))).IsFailed);
+
+            var lenient = await new FileInfoTransformer { RelativeRoot = root, RequireFile = false }.ActOneAsync(Entity((FileKeys.FilePath, outside)));
+            Assert.False(lenient.IsFailed);
+            Assert.Equal(outside, lenient[FileKeys.RelativePath]);
+        }
+
         [Theory]
         [InlineData(0L, "0 B")]
         [InlineData(1023L, "1023 B")]

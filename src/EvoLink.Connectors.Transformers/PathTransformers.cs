@@ -77,19 +77,39 @@ namespace EvoLink.Connectors.Transformers
         [Description("Extensions retirées de la fin du nom avant de calculer FILE-ExcludedName et FILE-Extension (ex. p7m, tmp).")]
         public List<string> ExtensionExclusions { get; set; } = [];
 
-        [Description("Met l'entité en échec lorsque le fichier n'existe pas (sinon seules les informations tirées du chemin sont ajoutées).")]
+        [Description("Met l'entité en échec lorsque le chemin est vide, hors de 'relativeRoot' ou que le fichier n'existe pas (sinon l'entité continue avec les informations disponibles).")]
         public bool RequireFile { get; set; } = true;
 
         public override Task<Entity?> TransformAsync(Entity entity, JobContext context)
         {
             ConnectorGuard.Required(DisplayName, ("filePathProperty", FilePathProperty));
 
-            var raw = Helpers.Text(Helpers.GetRequired(entity, FilePathProperty)).Trim();
+            var raw = RequireFile
+                ? Helpers.Text(Helpers.GetRequired(entity, FilePathProperty)).Trim()
+                : Helpers.Text(entity.GetValueOrDefault(FilePathProperty)).Trim();
+
             if (raw.Length == 0)
-                throw new InvalidOperationException($"La propriété '{FilePathProperty}' est vide.");
+            {
+                if (RequireFile)
+                    throw new InvalidOperationException($"La propriété '{FilePathProperty}' est vide.");
+
+                // No file for this entity: it goes on without the FILE-* information.
+                context.LogDebug($"[{DisplayName}] Propriété '{FilePathProperty}' vide : aucune information de fichier ajoutée.");
+                return Task.FromResult<Entity?>(entity);
+            }
 
             var filePath = Helpers.NormalizeSeparators(raw);
-            var relativePath = string.IsNullOrWhiteSpace(RelativeRoot) ? filePath : Helpers.RelativeTo(filePath, RelativeRoot);
+            string relativePath;
+
+            try
+            {
+                relativePath = string.IsNullOrWhiteSpace(RelativeRoot) ? filePath : Helpers.RelativeTo(filePath, RelativeRoot);
+            }
+            catch (InvalidOperationException ex) when (!RequireFile)
+            {
+                context.LogWarning($"[{DisplayName}] {ex.Message} FILE-RelativePath reçoit le chemin complet.");
+                relativePath = filePath;
+            }
             var fileInfo = new FileInfo(ToIoPath(filePath));
 
             if (fileInfo.Exists)

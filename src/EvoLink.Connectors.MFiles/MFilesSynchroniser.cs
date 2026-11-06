@@ -87,6 +87,9 @@ namespace EvoLink.Connectors.MFiles
         [Description("Propriété de l'entité contenant le chemin du fichier à joindre.")]
         public string FilePathProperty { get; set; } = MFilesKeys.FilePath;
 
+        [Description("Met l'entité en échec lorsque le fichier à joindre est introuvable (sinon l'objet est créé sans ce fichier, avec un avertissement). Un chemin vide ne joint jamais de fichier.")]
+        public bool RequireFile { get; set; } = true;
+
         [Description("Regroupe en un seul document multi-fichiers les entités qui ont la même valeur pour cette propriété (ex. BatchID, comme EvoBus) : la première porte les propriétés et la clé, les fichiers des autres sont joints à sa création.")]
         public string? GroupFilesBy { get; set; }
 
@@ -311,9 +314,15 @@ namespace EvoLink.Connectors.MFiles
 
             var path = context.ResolvePath(text.Trim());
 
-            // Not a FileNotFoundException: a missing source file is an error of the entity, not an unavailability of the target.
             if (!File.Exists(path))
-                throw new InvalidOperationException($"Le fichier à joindre '{path}' est introuvable.");
+            {
+                // Not a FileNotFoundException: a missing source file is an error of the entity, not an unavailability of the target.
+                if (RequireFile)
+                    throw new InvalidOperationException($"Le fichier à joindre '{path}' est introuvable.");
+
+                context.LogWarning($"[{DisplayName}] Fichier à joindre '{path}' introuvable : l'objet est créé sans ce fichier.");
+                return null;
+            }
 
             return new MFilesFile(path, Path.GetFileNameWithoutExtension(path), Path.GetExtension(path).TrimStart('.'));
         }
