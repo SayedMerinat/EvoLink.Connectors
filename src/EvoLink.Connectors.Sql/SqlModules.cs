@@ -1,5 +1,6 @@
 using System.ComponentModel;
 using System.Data.Common;
+using System.Globalization;
 using EvoLink.Connectors.Common;
 using Newtonsoft.Json;
 using Ortolan.Core.Models;
@@ -119,6 +120,12 @@ namespace EvoLink.Connectors.Sql
     [Description("Synchronise les entités dans une table SQL (SQL Server, MySQL, ODBC, OleDB, SQLite) : insertion, mise à jour des colonnes modifiées, suppression.")]
     public class SqlSynchroniserModule : SynchroniserModule
     {
+        /// <summary>Metadata receiving the value of <see cref="IdentityColumn"/> (created, updated or unchanged row).</summary>
+        public const string IdMetadataKey = "sql.id";
+
+        /// <summary>Metadata receiving the synchronised table.</summary>
+        public const string TableMetadataKey = "sql.table";
+
         private ISqlGateway? _gateway;
         private Dictionary<string, Type> _columnTypes = new(StringComparer.OrdinalIgnoreCase);
         private FieldMapping _mapping = new(null);
@@ -151,11 +158,19 @@ namespace EvoLink.Connectors.Sql
         [Description("Applique toutes les opérations dans une transaction validée à la fin (sinon chaque opération est validée immédiatement et la reprise se fait ligne par ligne).")]
         public bool UseTransaction { get; set; }
 
+        [Description("Colonne générée par la base (IDENTITY, AUTO_INCREMENT, valeur par défaut...) : jamais écrite, sa valeur est relue après l'insertion et donnée à l'entité dans la métadonnée 'sql.id', que la ligne soit créée, mise à jour ou inchangée.")]
+        public string? IdentityColumn { get; set; }
+
+        [Description("Propriété de l'entité recevant aussi la valeur de la colonne générée (ex. ProduitId), pour la référencer dans les modules suivants. Vide = métadonnée 'sql.id' seulement.")]
+        public string? IdentityProperty { get; set; }
+
         [Description("Délai maximal d'une requête, en secondes.")]
         public int CommandTimeoutSeconds { get; set; } = 120;
 
         [JsonIgnore]
         protected override bool AppliesImmediately => !UseTransaction;
+
+        private bool HasIdentity => !string.IsNullOrWhiteSpace(IdentityColumn);
 
         protected virtual ISqlGateway CreateGateway()
             => new DbSqlGateway(Engine, ConnectionString, CommandTimeoutSeconds);
@@ -167,26 +182,52 @@ namespace EvoLink.Connectors.Sql
             _mapping = new FieldMapping(Fields, OnlyMappedFields);
             _gateway = CreateGateway();
 
-            await Guard(async () =>
+            try
             {
-                await _gateway.OpenAsync(context.CancellationToken);
-                _columnTypes = await _gateway.GetColumnTypesAsync($"SELECT * FROM {Quote(Table)} WHERE 1 = 0", context.CancellationToken);
+                await Guard(async () =>
+                {
+                    await _gateway.OpenAsync(context.CancellationToken);
+                    _columnTypes = await _gateway.GetColumnTypesAsync($"SELECT * FROM {Quote(Table)} WHERE 1 = 0", context.CancellationToken);
 
-                if (UseTransaction)
-                    await _gateway.BeginTransactionAsync(context.CancellationToken);
-            });
+                    if (UseTransaction)
+                        await _gateway.BeginTransactionAsync(context.CancellationToken);
+                });
+
+                if (HasIdentity && !_columnTypes.ContainsKey(IdentityColumn!))
+                    throw ConnectorGuard.Invalid(DisplayName, $"La colonne générée '{IdentityColumn}' n'existe pas dans la table '{Table}'.");
+
+                if (HasIdentity && KeyProperties(context).Any(IsIdentity))
+                    throw ConnectorGuard.Invalid(DisplayName, $"La colonne générée '{IdentityColumn}' ne peut pas être un champ clé : elle n'existe pas encore dans la source. Utilisez une clé métier (ex. l'identifiant de la source).");
+            }
+            catch
+            {
+                // The base class closes the connection only once it has started: a refused configuration must not leak it.
+                await CloseAsync(context);
+                throw;
+            }
 
             foreach (var entity in input)
                 ConvertToColumnTypes(entity);
 
             // Only the properties stored in a column are compared, otherwise a property absent from the table would
-            // make every record look modified.
+            // make every record look modified. The generated column is never compared nor written.
             var compared = (SyncFields ?? context.Sync.SyncFields) is { Count: > 0 } configured
                 ? configured
                 : input.SelectMany(e => e.Properties.Keys).Distinct(StringComparer.OrdinalIgnoreCase);
-            SyncFields = compared.Where(p => _columnTypes.ContainsKey(_mapping.ToField(p)) && (!_mapping.OnlyMappedFields || Fields.ContainsKey(p))).ToList();
+            SyncFields = compared.Where(p => _columnTypes.ContainsKey(_mapping.ToField(p)) && (!_mapping.OnlyMappedFields || Fields.ContainsKey(p)) && !IsIdentity(p)).ToList();
 
-            return await base.ActAsync(input, context);
+            var output = await base.ActAsync(input, context);
+
+            if (HasIdentity && !string.IsNullOrWhiteSpace(IdentityProperty))
+            {
+                foreach (var entity in output.Where(e => !e.IsFailed && e.SyncResult != SyncResult.Deleted))
+                {
+                    if (entity.Metadata.TryGetValue(IdMetadataKey, out var id))
+                        entity[IdentityProperty] = long.TryParse(id, NumberStyles.Integer, CultureInfo.InvariantCulture, out var number) ? number : id;
+                }
+            }
+
+            return output;
         }
 
         protected override async Task<IEnumerable<Entity>> ReadTargetAsync(JobContext context)
@@ -194,7 +235,16 @@ namespace EvoLink.Connectors.Sql
             var sql = $"SELECT * FROM {Quote(Table)}" + (string.IsNullOrWhiteSpace(Where) ? string.Empty : $" WHERE ({Where})");
             var rows = await _gateway!.QueryAsync(sql, [], context.CancellationToken);
 
-            return rows.Select(row => _mapping.ToEntity(row.Select(c => new KeyValuePair<string, object?>(c.Key, SqlValues.FromDatabase(c.Value))))).ToList();
+            return rows.Select(row =>
+            {
+                var entity = _mapping.ToEntity(row.Select(c => new KeyValuePair<string, object?>(c.Key, SqlValues.FromDatabase(c.Value))));
+
+                // The base class gives these metadata to the source entity when the row is updated or unchanged.
+                if (HasIdentity && row.TryGetValue(IdentityColumn!, out var id))
+                    SetIdentity(entity, id);
+
+                return entity;
+            }).ToList();
         }
 
         protected override async Task<Entity> CreateAsync(Entity source, JobContext context)
@@ -208,8 +258,43 @@ namespace EvoLink.Connectors.Sql
                       $"VALUES ({string.Join(", ", values.Select((_, i) => dialect.Parameter(i)))})";
 
             await RecordAsync(() => _gateway.ExecuteAsync(sql, values.Select(v => v.Value).ToList(), context.CancellationToken));
+
+            if (HasIdentity)
+                await ReadIdentityAsync(source, context);
+
             return source;
         }
+
+        /// <summary>
+        /// Reads back the generated value of the inserted row by its key. This works with every engine (IDENTITY, AUTO_INCREMENT,
+        /// sequences, default values, triggers), in the transaction of the synchroniser when there is one.
+        /// </summary>
+        private async Task ReadIdentityAsync(Entity source, JobContext context)
+        {
+            var keys = KeyValues(source, context);
+            var dialect = _gateway!.Dialect;
+            var sql = $"SELECT {dialect.Quote(IdentityColumn!)} FROM {Quote(Table)} " +
+                      $"WHERE {string.Join(" AND ", keys.Select((k, i) => $"{dialect.Quote(k.Column)} = {dialect.Parameter(i)}"))}";
+
+            var rows = await _gateway.QueryAsync(sql, keys.Select(k => k.Value).ToList(), context.CancellationToken);
+
+            if (rows.Count == 1 && rows[0].Values.FirstOrDefault() is { } id)
+                SetIdentity(source, id);
+            else
+                context.LogWarning($"[{DisplayName}] Ligne créée mais sa colonne '{IdentityColumn}' n'a pas pu être relue ({rows.Count} ligne(s) pour la clé) : {source.ToFlatString(200)}");
+        }
+
+        private void SetIdentity(Entity entity, object? value)
+        {
+            if (SqlValues.FromDatabase(value) is not { } id)
+                return;
+
+            entity.Metadata[IdMetadataKey] = Convert.ToString(id, CultureInfo.InvariantCulture) ?? string.Empty;
+            entity.Metadata[TableMetadataKey] = Table;
+        }
+
+        private bool IsIdentity(string property)
+            => HasIdentity && string.Equals(_mapping.ToField(property), IdentityColumn, StringComparison.OrdinalIgnoreCase);
 
         protected override async Task<Entity> UpdateAsync(Entity source, Entity existing, JobContext context)
         {
@@ -284,7 +369,7 @@ namespace EvoLink.Connectors.Sql
                     continue;
 
                 var column = _mapping.ToField(property);
-                if (!_columnTypes.TryGetValue(column, out var type))
+                if (!_columnTypes.TryGetValue(column, out var type) || IsIdentity(property))
                     continue;
 
                 result.Add((property, column, ConvertValue(entity.GetValueOrDefault(property), type)));
