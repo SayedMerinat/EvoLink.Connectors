@@ -77,8 +77,11 @@ Deux façons de faire :
 
 - **Même flux** : chaque entité crée d'abord son produit, puis son article. `"identityProperty": "ProduitId"` place l'ID
   du produit dans une propriété, et le synchroniser de l'article l'écrit tel quel.
-- **Deux imports** (le plus courant) : les articles viennent d'un autre modèle Odoo et désignent leur produit par son
-  identifiant Odoo. `sql-lookup` retrouve l'`ID` local du produit d'après cet identifiant.
+- **Deux imports fusionnés** (un article par produit) : le second provider, avec `"mergeOn": ["Reference"]`, ajoute les
+  données d'article aux entités des produits. `identityProperty` y a déjà placé l'ID du produit. Voir « Fusion de providers »
+  dans `docs/ARCHITECTURE.md` d'Ortolan.
+- **Deux imports séparés** (plusieurs articles par produit) : les articles viennent d'un autre modèle Odoo et désignent
+  leur produit par son identifiant Odoo. `sql-lookup` retrouve l'`ID` local du produit d'après cet identifiant (exemple ci-dessous).
 
 La clé de synchronisation est l'identifiant de la source (`OdooId`, colonne unique), jamais la colonne générée : la
 synchronisation reste rejouable, et un job repris retrouve le produit créé par la tentative interrompue.
