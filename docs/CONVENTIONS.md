@@ -14,7 +14,8 @@ ni Ortolan depuis ce dépôt.
 |---|---|---|
 | `EvoLink.Connectors.Common` | `ValueConverter`, `FieldMapping`, `ConnectorGuard` (bibliothèque, pas un plugin) | – |
 | `EvoLink.Connectors.Sql` | MSSQL, MySQL, ODBC, OleDB | `sql-provider`, `sql-synchroniser` |
-| `EvoLink.Connectors.Odoo` | Client JSON-RPC Odoo 17 natif | `odoo-provider`, `odoo-synchroniser`, `odoo-id-lookup` |
+| `EvoLink.Odoo.Client` | Client Odoo 17 JSON-RPC, sans dépendance à Ortolan (bibliothèque, pas un plugin) | – |
+| `EvoLink.Connectors.Odoo` | Modules Odoo, sur `EvoLink.Odoo.Client` | `odoo-provider`, `odoo-synchroniser`, `odoo-id-lookup` |
 | `EvoLink.Connectors.MFiles` | API COM M-Files (`Interop.MFilesAPI`) | `mfiles-provider`, `mfiles-synchroniser`, `mfiles-user-lookup`, `mfiles-value-lookup` |
 | `EvoLink.Connectors.DocSeries` | `EvoLink.DocSeries.API` | `docseries-writer` (ou `docseries-synchroniser` si l'API le permet) |
 | `EvoLink.Connectors.Transformers` | Transformers et conditions EvoBus portés | voir la section dédiée |

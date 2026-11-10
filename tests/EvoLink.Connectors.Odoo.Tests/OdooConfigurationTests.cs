@@ -1,6 +1,6 @@
 using System.ComponentModel;
 using System.Reflection;
-using EvoLink.Connectors.Odoo.Client;
+using EvoLink.Odoo.Client;
 using Newtonsoft.Json.Linq;
 using Ortolan.Core.Security;
 using Ortolan.Core.Serialization;
@@ -133,7 +133,7 @@ namespace EvoLink.Connectors.Odoo.Tests
             Assert.Equal(false, OdooValues.ToPayload(null, new OdooFieldInfo("parent_id", "many2one")));
 
             var command = Assert.IsType<List<object?>>(OdooValues.ToPayload(new List<object?> { 1L, 2L }, new OdooFieldInfo("category_id", "many2many")));
-            Assert.Equal("[[6,0,[1,2]]]", OdooJsonRpcClient.ToJson(command).ToString(Newtonsoft.Json.Formatting.None));
+            Assert.Equal("[[6,0,[1,2]]]", OdooJson.ToJson(command).ToString(Newtonsoft.Json.Formatting.None));
         }
     }
 }

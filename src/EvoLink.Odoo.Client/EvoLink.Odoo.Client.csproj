@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>EvoLink.Odoo.Client</RootNamespace>
+    <Description>Client Odoo 17 (API externe JSON-RPC) : lecture par pages, création, mise à jour, suppression, recherche par nom, domaines, contexte, annulation et erreurs typées. Ne dépend ni d'Ortolan ni des connecteurs : réutilisable par EvoBus.</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Same version as Ortolan.Core: the Ortolan server provides it to the plugins. -->
+    <PackageReference Include="Newtonsoft.Json" Version="13.0.4" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="EvoLink.Odoo.Client.Tests" />
+  </ItemGroup>
+
+</Project>

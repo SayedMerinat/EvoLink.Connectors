@@ -1,22 +1,23 @@
-using System.Collections;
 using System.Globalization;
 using System.Net;
 using System.Text;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
-using Ortolan.Core.Exceptions;
-using Ortolan.Core.Serialization;
 
-namespace EvoLink.Connectors.Odoo.Client
+namespace EvoLink.Odoo.Client
 {
     /// <summary>
-    /// Lightweight Odoo 17 client over the external JSON-RPC API: <c>POST {url}/jsonrpc</c>, <c>common.authenticate</c>
-    /// (database, user, API key) to get the uid, then <c>object.execute_kw</c>. Thread-safe: one instance can serve parallel calls.
-    /// The API key is only sent in the request bodies, never logged nor included in an exception message.
+    /// Odoo 17 client over the external JSON-RPC API: <c>POST {url}/jsonrpc</c>, <c>common.authenticate</c> (database, user,
+    /// API key) to get the uid, then <c>object.execute_kw</c>.
+    /// <list type="bullet">
+    /// <item>Thread-safe: one instance can serve parallel calls; the authentication is done once.</item>
+    /// <item>No shared state: two instances (production and test Odoo) never mix their data.</item>
+    /// <item>The API key is only sent in the request bodies, never logged nor included in an exception message.</item>
+    /// </list>
     /// </summary>
     public sealed class OdooJsonRpcClient : IOdooClient
     {
-        private static readonly string[] FieldAttributes = ["type", "string", "relation", "readonly", "store", "required"];
+        private static readonly string[] FieldAttributes = ["type", "string", "relation", "readonly", "store", "required", "selection"];
 
         private readonly OdooConnection _connection;
         private readonly HttpClient _http;
@@ -26,11 +27,20 @@ namespace EvoLink.Connectors.Odoo.Client
 
         /// <param name="connection">Odoo instance.</param>
         /// <param name="handler">HTTP handler (tests, proxy). It is not disposed with the client.</param>
+        /// <exception cref="OdooConfigurationException">Incomplete or invalid settings.</exception>
         public OdooJsonRpcClient(OdooConnection connection, HttpMessageHandler? handler = null)
         {
             _connection = connection ?? throw new ArgumentNullException(nameof(connection));
+            _connection.Validate();
+
             _http = handler == null ? new HttpClient() : new HttpClient(handler, disposeHandler: false);
-            _http.Timeout = connection.Timeout > TimeSpan.Zero ? connection.Timeout : TimeSpan.FromSeconds(100);
+            _http.Timeout = connection.Timeout;
+        }
+
+        /// <summary>Client of the instance at <paramref name="url"/>, e.g. https://societe.odoo.com.</summary>
+        public OdooJsonRpcClient(string url, string database, string username, string apiKey, TimeSpan? timeout = null)
+            : this(new OdooConnection { Url = url, Database = database, Username = username, ApiKey = apiKey, Timeout = timeout ?? TimeSpan.FromSeconds(100) })
+        {
         }
 
         /// <summary>
@@ -62,6 +72,7 @@ namespace EvoLink.Connectors.Odoo.Client
                     throw new OdooUnavailableException($"Authentification impossible sur Odoo {_connection} : {ex.OdooMessage}", ex);
                 }
 
+                // Odoo answers false (not an error) when the credentials are refused.
                 if (result.Type != JTokenType.Integer || result.Value<long>() <= 0)
                     throw new OdooUnavailableException($"Authentification refusée par Odoo {_connection} pour l'utilisateur '{_connection.Username}' : vérifiez la base, l'utilisateur et la clé API.");
 
@@ -76,13 +87,17 @@ namespace EvoLink.Connectors.Odoo.Client
             }
         }
 
-        /// <summary>
-        /// <c>object.execute_kw</c> of any ORM method.
-        /// </summary>
-        public async Task<JToken> ExecuteKwAsync(string model, string method, JArray args, JObject? kwargs = null, CancellationToken cancellationToken = default)
+        public async Task<JToken> ExecuteKwAsync(string model, string method, JArray args, JObject? kwargs = null, OdooContext? context = null, CancellationToken cancellationToken = default)
         {
+            if (string.IsNullOrWhiteSpace(model))
+                throw new ArgumentException("Le modèle Odoo est obligatoire.", nameof(model));
+
+            kwargs = kwargs == null ? [] : (JObject)kwargs.DeepClone();
+            if (kwargs["context"] == null)
+                kwargs["context"] = (context ?? OdooContext.Default).ToJson();
+
             var uid = await AuthenticateAsync(cancellationToken);
-            var parameters = new JArray(_connection.Database, uid, _connection.ApiKey, model, method, args, kwargs ?? new JObject());
+            var parameters = new JArray(_connection.Database, uid, _connection.ApiKey, model, method, args, kwargs);
 
             try
             {
@@ -96,9 +111,7 @@ namespace EvoLink.Connectors.Odoo.Client
 
         public async Task<IReadOnlyDictionary<string, OdooFieldInfo>> FieldsGetAsync(string model, OdooContext? context = null, CancellationToken cancellationToken = default)
         {
-            var kwargs = new JObject { ["attributes"] = new JArray(FieldAttributes), ["context"] = Context(context) };
-            var result = await ExecuteKwAsync(model, "fields_get", [], kwargs, cancellationToken);
-
+            var result = await ExecuteKwAsync(model, "fields_get", [], new JObject { ["attributes"] = new JArray(FieldAttributes) }, context, cancellationToken);
             var fields = new Dictionary<string, OdooFieldInfo>(StringComparer.Ordinal);
 
             if (result is not JObject definitions)
@@ -113,10 +126,11 @@ namespace EvoLink.Connectors.Odoo.Client
                     property.Name,
                     Text(definition["type"]) ?? "char",
                     Text(definition["relation"]),
-                    definition["readonly"]?.Type == JTokenType.Boolean && definition["readonly"]!.Value<bool>(),
-                    definition["store"]?.Type != JTokenType.Boolean || definition["store"]!.Value<bool>(),
-                    definition["required"]?.Type == JTokenType.Boolean && definition["required"]!.Value<bool>(),
-                    Text(definition["string"]));
+                    Flag(definition["readonly"], false),
+                    Flag(definition["store"], true),
+                    Flag(definition["required"], false),
+                    Text(definition["string"]),
+                    Selection(definition["selection"]));
             }
 
             return fields;
@@ -130,7 +144,7 @@ namespace EvoLink.Connectors.Odoo.Client
             if (fields is { Count: > 0 })
                 kwargs["fields"] = new JArray(fields);
 
-            kwargs["offset"] = offset;
+            kwargs["offset"] = Math.Max(0, offset);
 
             if (limit > 0)
                 kwargs["limit"] = limit;
@@ -138,13 +152,9 @@ namespace EvoLink.Connectors.Odoo.Client
             if (!string.IsNullOrWhiteSpace(order))
                 kwargs["order"] = order;
 
-            kwargs["context"] = Context(context);
+            var result = await ExecuteKwAsync(model, "search_read", [domain], kwargs, context, cancellationToken);
 
-            var result = await ExecuteKwAsync(model, "search_read", [domain], kwargs, cancellationToken);
-
-            return result is JArray records
-                ? records.OfType<JObject>().Select(r => ValueNormalizer.NormalizeDictionary(r.Properties().ToDictionary(p => p.Name, p => (object?)p.Value))).ToList()
-                : [];
+            return result is JArray records ? records.OfType<JObject>().Select(OdooJson.ToRecord).ToList() : [];
         }
 
         public async Task<IReadOnlyList<long>> SearchAsync(string model, JArray domain, int? limit = null, string? order = null, OdooContext? context = null, CancellationToken cancellationToken = default)
@@ -157,9 +167,7 @@ namespace EvoLink.Connectors.Odoo.Client
             if (!string.IsNullOrWhiteSpace(order))
                 kwargs["order"] = order;
 
-            kwargs["context"] = Context(context);
-
-            return Ids(await ExecuteKwAsync(model, "search", [domain], kwargs, cancellationToken));
+            return Ids(await ExecuteKwAsync(model, "search", [domain], kwargs, context, cancellationToken));
         }
 
         public async Task<IReadOnlyList<long>> CreateAsync(string model, IReadOnlyList<IReadOnlyDictionary<string, object?>> records, OdooContext? context = null, CancellationToken cancellationToken = default)
@@ -167,10 +175,10 @@ namespace EvoLink.Connectors.Odoo.Client
             if (records.Count == 0)
                 return [];
 
-            var values = new JArray(records.Select(r => ToJson(r)));
-            var ids = Ids(await ExecuteKwAsync(model, "create", [values], new JObject { ["context"] = Context(context) }, cancellationToken));
+            var values = new JArray(records.Select(r => OdooJson.ToJson(r)));
+            var ids = Ids(await ExecuteKwAsync(model, "create", [values], null, context, cancellationToken));
 
-            if (ids.Count != records.Count)
+            if (ids.Count != records.Count || ids.Any(id => id <= 0))
                 throw new OdooRpcException($"Odoo a renvoyé {ids.Count} identifiant(s) pour {records.Count} enregistrement(s) créé(s) dans le modèle '{model}'.", "réponse inattendue");
 
             return ids;
@@ -178,10 +186,10 @@ namespace EvoLink.Connectors.Odoo.Client
 
         public async Task WriteAsync(string model, IReadOnlyCollection<long> ids, IReadOnlyDictionary<string, object?> values, OdooContext? context = null, CancellationToken cancellationToken = default)
         {
-            if (ids.Count == 0)
+            if (ids.Count == 0 || values.Count == 0)
                 return;
 
-            await ExecuteKwAsync(model, "write", [new JArray(ids), ToJson(values)], new JObject { ["context"] = Context(context) }, cancellationToken);
+            await ExecuteKwAsync(model, "write", [new JArray(ids), OdooJson.ToJson(values)], null, context, cancellationToken);
         }
 
         public async Task UnlinkAsync(string model, IReadOnlyCollection<long> ids, OdooContext? context = null, CancellationToken cancellationToken = default)
@@ -189,7 +197,7 @@ namespace EvoLink.Connectors.Odoo.Client
             if (ids.Count == 0)
                 return;
 
-            await ExecuteKwAsync(model, "unlink", [new JArray(ids)], new JObject { ["context"] = Context(context) }, cancellationToken);
+            await ExecuteKwAsync(model, "unlink", [new JArray(ids)], null, context, cancellationToken);
         }
 
         public async Task<IReadOnlyList<OdooNameResult>> NameSearchAsync(string model, string name, string @operator = "ilike", JArray? domain = null, int limit = 100,
@@ -201,10 +209,9 @@ namespace EvoLink.Connectors.Odoo.Client
                 ["args"] = domain ?? [],
                 ["operator"] = string.IsNullOrWhiteSpace(@operator) ? "ilike" : @operator,
                 ["limit"] = limit,
-                ["context"] = Context(context),
             };
 
-            var result = await ExecuteKwAsync(model, "name_search", [], kwargs, cancellationToken);
+            var result = await ExecuteKwAsync(model, "name_search", [], kwargs, context, cancellationToken);
 
             return result is JArray pairs
                 ? pairs.OfType<JArray>().Where(p => p.Count >= 1 && p[0].Type == JTokenType.Integer)
@@ -217,22 +224,6 @@ namespace EvoLink.Connectors.Odoo.Client
             _http.Dispose();
             _authenticationLock.Dispose();
         }
-
-        /// <summary>
-        /// Converts a value of the connector (null, primitives, dates, lists, dictionaries, JSON) into the JSON sent to Odoo.
-        /// </summary>
-        internal static JToken ToJson(object? value)
-            => value switch
-            {
-                null => JValue.CreateNull(),
-                JToken token => token,
-                string text => new JValue(text),
-                DateTime date => new JValue(date.ToString(date.TimeOfDay == TimeSpan.Zero ? "yyyy-MM-dd" : "yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture)),
-                DateTimeOffset date => new JValue(date.UtcDateTime.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture)),
-                IEnumerable<KeyValuePair<string, object?>> dictionary => new JObject(dictionary.Select(p => new JProperty(p.Key, ToJson(p.Value)))),
-                IEnumerable items => new JArray(items.Cast<object?>().Select(ToJson)),
-                _ => JToken.FromObject(value),
-            };
 
         private async Task<JToken> CallAsync(string service, string method, JArray args, string operation, CancellationToken cancellationToken)
         {
@@ -274,7 +265,7 @@ namespace EvoLink.Connectors.Odoo.Client
                         new HttpRequestException($"HTTP {status} {response.ReasonPhrase}", null, response.StatusCode));
 
                 if (!response.IsSuccessStatusCode)
-                    throw new OrtolanConfigurationException($"Odoo {_connection} a répondu {status} {response.ReasonPhrase} à l'adresse '{_connection.Endpoint}' : vérifiez l'URL de l'instance.");
+                    throw new OdooConfigurationException($"Odoo {_connection} a répondu {status} {response.ReasonPhrase} à l'adresse '{_connection.Endpoint}' : vérifiez l'URL de l'instance.");
 
                 try
                 {
@@ -294,7 +285,7 @@ namespace EvoLink.Connectors.Odoo.Client
 
             try
             {
-                using var reader = new JsonTextReader(new StringReader(content)) { DateParseHandling = DateParseHandling.None };
+                using var reader = new JsonTextReader(new StringReader(content)) { DateParseHandling = DateParseHandling.None, FloatParseHandling = FloatParseHandling.Double };
                 json = JObject.Load(reader);
             }
             catch (JsonException ex)
@@ -305,6 +296,7 @@ namespace EvoLink.Connectors.Odoo.Client
             if (json["error"] is JObject error)
                 throw ToException(error, operation);
 
+            // A null or false result is a valid answer (e.g. a write returns true, a refused authenticate false).
             return json["result"] ?? JValue.CreateNull();
         }
 
@@ -317,9 +309,6 @@ namespace EvoLink.Connectors.Odoo.Client
             return new OdooRpcException($"Odoo a refusé l'opération {operation} : {odooMessage}", odooMessage, Text(data?["name"]), code, Text(data?["debug"]));
         }
 
-        private static JObject Context(OdooContext? context)
-            => (context ?? OdooContext.Default).ToJson();
-
         private static List<long> Ids(JToken result)
             => result switch
             {
@@ -327,6 +316,14 @@ namespace EvoLink.Connectors.Odoo.Client
                 { Type: JTokenType.Integer } => [result.Value<long>()],
                 _ => [],
             };
+
+        private static bool Flag(JToken? token, bool fallback)
+            => token?.Type == JTokenType.Boolean ? token.Value<bool>() : fallback;
+
+        private static List<KeyValuePair<string, string>>? Selection(JToken? token)
+            => token is JArray options
+                ? options.OfType<JArray>().Where(o => o.Count >= 1).Select(o => new KeyValuePair<string, string>(Text(o[0]) ?? string.Empty, o.Count > 1 ? Text(o[1]) ?? string.Empty : string.Empty)).ToList()
+                : null;
 
         private static string? Text(JToken? token)
             => token is null || token.Type is JTokenType.Null or JTokenType.Undefined || (token.Type == JTokenType.Boolean && !token.Value<bool>())

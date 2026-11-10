@@ -14,6 +14,7 @@ Chaque connecteur est un **plugin** que le serveur Ortolan charge au démarrage.
 |---|---|
 | `EvoLink.Connectors.Sql` | `sql-provider`, `sql-synchroniser`, `sql-lookup` |
 | `EvoLink.Connectors.Odoo` | `odoo-provider`, `odoo-synchroniser`, `odoo-id-lookup` |
+| `EvoLink.Odoo.Client` | Client Odoo 17 JSON-RPC indépendant d'Ortolan (remplace `EvoLink.Odoo.API`, réutilisable par EvoBus) : voir [son README](src/EvoLink.Odoo.Client/README.md) |
 | `EvoLink.Connectors.MFiles` (Windows, API COM) | `mfiles-provider`, `mfiles-synchroniser`, `mfiles-user-lookup`, `mfiles-value-lookup` |
 | `EvoLink.Connectors.DocSeries` | `docseries-writer` (création seule : l'API DocSeries 1.1.0 ne permet ni recherche par champ, ni mise à jour, ni suppression) |
 | `EvoLink.Connectors.Transformers` | `arithmetic`, `composite`, `conditional`, `if-then-else`, `csv-lookup`, `path-segment`, `md5-hash`, `file-info`, `aggregate`, `regex-aggregate`, `regex-extract` ; conditions `arithmetic-condition`, `date-condition`, `file-size`, `contains`, `property-compare` |
@@ -23,7 +24,7 @@ Les règles de conception sont décrites dans [docs/CONVENTIONS.md](docs/CONVENT
 
 ## Ce qui n'est pas encore vérifié
 
-Les 289 tests passent sur des passerelles simulées (SQLite réel pour SQL). Sur l'instance Ortolan de test, les 5 plugins
+Les 306 tests passent sur des passerelles simulées (SQLite réel pour SQL). Sur l'instance Ortolan de test, les 5 plugins
 se chargent ensemble (68 types de modules) et une synchronisation SQL, une chaîne de transformers et l'échec propre d'une
 connexion M-Files (classé « source inaccessible ») ont été exécutés. **Aucun appel n'a encore été fait contre un vrai
 coffre M-Files, une vraie instance Odoo 17 ni un vrai serveur DocSeries** : à valider sur des environnements de test

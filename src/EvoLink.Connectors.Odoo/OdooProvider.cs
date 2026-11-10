@@ -1,7 +1,7 @@
 using System.ComponentModel;
 using System.Globalization;
 using EvoLink.Connectors.Common;
-using EvoLink.Connectors.Odoo.Client;
+using EvoLink.Odoo.Client;
 using Ortolan.Core.Models;
 using Ortolan.Core.Modules;
 using Ortolan.Core.Pipeline;

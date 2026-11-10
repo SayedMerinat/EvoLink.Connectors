@@ -1,4 +1,4 @@
-using EvoLink.Connectors.Odoo.Client;
+using EvoLink.Odoo.Client;
 using Newtonsoft.Json;
 using Ortolan.Core.Exceptions;
 using Ortolan.Core.Models;

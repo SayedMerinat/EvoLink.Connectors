@@ -1,5 +1,5 @@
 using EvoLink.Connectors.Common;
-using EvoLink.Connectors.Odoo.Client;
+using EvoLink.Odoo.Client;
 using Ortolan.Core.Exceptions;
 
 namespace EvoLink.Connectors.Odoo
@@ -50,15 +50,25 @@ namespace EvoLink.Connectors.Odoo
         /// <summary>
         /// Runs a call to Odoo, an unavailability of Odoo (or a technical access failure) being converted by <paramref name="toUnavailable"/>.
         /// </summary>
-        public static Task<T> CallAsync<T>(Func<Task<T>> call, Func<Exception, OrtolanException> toUnavailable)
-            => ConnectorGuard.CallAsync(call, ex => ex is OdooUnavailableException, toUnavailable);
+        public static async Task<T> CallAsync<T>(Func<Task<T>> call, Func<Exception, OrtolanException> toUnavailable)
+        {
+            try
+            {
+                return await ConnectorGuard.CallAsync(call, ex => ex is OdooUnavailableException, toUnavailable);
+            }
+            catch (OdooConfigurationException ex)
+            {
+                // Wrong address of the instance: retrying can't succeed, the job stops without retry.
+                throw new OrtolanConfigurationException(ex.Message, ex);
+            }
+        }
 
         public static Task CallAsync(Func<Task> call, Func<Exception, OrtolanException> toUnavailable)
-            => ConnectorGuard.CallAsync(async () =>
+            => CallAsync(async () =>
             {
                 await call();
                 return true;
-            }, ex => ex is OdooUnavailableException, toUnavailable);
+            }, toUnavailable);
 
         public static bool IsUnavailability(Exception exception)
             => exception is OdooUnavailableException || ExceptionClassifier.IsAccessFailure(exception);

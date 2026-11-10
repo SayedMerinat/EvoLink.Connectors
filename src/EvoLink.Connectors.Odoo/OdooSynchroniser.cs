@@ -2,7 +2,7 @@ using System.Collections.Concurrent;
 using System.ComponentModel;
 using System.Globalization;
 using EvoLink.Connectors.Common;
-using EvoLink.Connectors.Odoo.Client;
+using EvoLink.Odoo.Client;
 using Newtonsoft.Json.Linq;
 using Ortolan.Core.Exceptions;
 using Ortolan.Core.Models;

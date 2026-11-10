@@ -1,9 +1,9 @@
 using System.Net;
-using EvoLink.Connectors.Odoo.Client;
-using Newtonsoft.Json.Linq;
-using Ortolan.Core.Exceptions;
 
-namespace EvoLink.Connectors.Odoo.Tests
+using Newtonsoft.Json.Linq;
+
+
+namespace EvoLink.Odoo.Client.Tests
 {
     public class OdooJsonRpcClientTests
     {
@@ -101,7 +101,7 @@ namespace EvoLink.Connectors.Odoo.Tests
                 """ "res.partner" "unlink" [[12]] {"context":{"lang":"de_CH"}}""".Trim(),
                 """ "res.partner" "search" [[["ref","=","C1"]]] {"limit":2,"order":"id","context":{"lang":"de_CH"}}""".Trim(),
                 """ "res.partner.category" "name_search" [] {"name":"VIP","args":[],"operator":"=","limit":2,"context":{"lang":"de_CH"}}""".Trim(),
-                """ "res.partner" "fields_get" [] {"attributes":["type","string","relation","readonly","store","required"],"context":{}}""".Trim(),
+                """ "res.partner" "fields_get" [] {"attributes":["type","string","relation","readonly","store","required","selection"],"context":{}}""".Trim(),
             ], calls);
         }
 
@@ -151,7 +151,7 @@ namespace EvoLink.Connectors.Odoo.Tests
             var handler = new FakeHttpHandler { Respond = (_, _) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotFound)) };
             using var client = Client(handler);
 
-            await Assert.ThrowsAsync<OrtolanConfigurationException>(() => client.SearchAsync("res.partner", []));
+            await Assert.ThrowsAsync<OdooConfigurationException>(() => client.SearchAsync("res.partner", []));
         }
 
         [Fact]

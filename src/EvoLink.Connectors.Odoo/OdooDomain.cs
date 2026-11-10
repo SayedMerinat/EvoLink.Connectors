@@ -1,6 +1,6 @@
 using System.ComponentModel;
 using EvoLink.Connectors.Common;
-using EvoLink.Connectors.Odoo.Client;
+using EvoLink.Odoo.Client;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using Ortolan.Core.Serialization;
@@ -27,8 +27,6 @@ namespace EvoLink.Connectors.Odoo
     /// </summary>
     public static class OdooDomain
     {
-        private static readonly HashSet<string> LogicalOperators = ["&", "|", "!"];
-
         /// <summary>
         /// Domain made of the filters and of an optional raw JSON domain (e.g. <c>["|", ["a", "=", 1], ["b", "=", 2]]</c>), all of them
         /// having to match. Throws an <see cref="Ortolan.Core.Exceptions.OrtolanConfigurationException"/> when they are invalid.
@@ -47,34 +45,20 @@ namespace EvoLink.Connectors.Odoo
 
             if (!string.IsNullOrWhiteSpace(rawDomain))
             {
-                JToken parsed;
+                JArray items;
 
                 try
                 {
-                    parsed = JToken.Parse(rawDomain);
+                    items = OdooDomainBuilder.Parse(rawDomain).ToJArray();
                 }
-                catch (JsonException ex)
+                catch (FormatException ex)
                 {
-                    throw ConnectorGuard.Invalid(module, $"Le domaine Odoo n'est pas un tableau JSON valide : {ex.Message}");
+                    throw ConnectorGuard.Invalid(module, ex.Message);
                 }
 
-                if (parsed is not JArray items)
-                    throw ConnectorGuard.Invalid(module, "Le domaine Odoo doit être un tableau JSON, ex. [[\"active\", \"=\", true]].");
-
+                // Implicit AND with the filters (prefix notation).
                 foreach (var item in items)
-                {
-                    var valid = item switch
-                    {
-                        JValue { Type: JTokenType.String } op => LogicalOperators.Contains(op.Value<string>()!),
-                        JArray { Count: 3 } leaf => leaf[0].Type == JTokenType.String && leaf[1].Type == JTokenType.String,
-                        _ => false,
-                    };
-
-                    if (!valid)
-                        throw ConnectorGuard.Invalid(module, $"Élément de domaine Odoo invalide : {item.ToString(Formatting.None)} (attendu : [\"champ\", \"opérateur\", valeur], \"&\", \"|\" ou \"!\").");
-
-                    domain.Add(item.DeepClone());
-                }
+                    domain.Add(item);
             }
 
             return domain;
@@ -82,7 +66,7 @@ namespace EvoLink.Connectors.Odoo
 
         /// <summary>Leaf <c>[field, operator, value]</c>.</summary>
         public static JArray Condition(string field, string @operator, object? value)
-            => new(field, @operator, OdooJsonRpcClient.ToJson(value));
+            => new(field, @operator, OdooJson.ToJson(value));
 
         /// <summary>Copy of <paramref name="domain"/> with additional leaves (implicit AND).</summary>
         public static JArray And(JArray domain, params JArray[] leaves)

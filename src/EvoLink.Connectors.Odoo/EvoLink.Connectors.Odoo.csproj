@@ -2,12 +2,19 @@
 
   <PropertyGroup>
     <RootNamespace>EvoLink.Connectors.Odoo</RootNamespace>
-    <Description>Connecteur Odoo 17 natif pour Ortolan (client JSON-RPC) : lecture, synchronisation et recherche d'identifiants.</Description>
+    <Description>Connecteur Odoo 17 natif pour Ortolan (librairie EvoLink.Odoo.Client) : lecture, synchronisation et recherche d'identifiants.</Description>
     <IsOrtolanPlugin>true</IsOrtolanPlugin>
   </PropertyGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\EvoLink.Connectors.Common\EvoLink.Connectors.Common.csproj" />
+    <ProjectReference Include="..\EvoLink.Odoo.Client\EvoLink.Odoo.Client.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Provided by the Ortolan server: referenced directly so that Directory.Build.targets excludes it from the plugin
+         (otherwise EvoLink.Odoo.Client would bring a copy of it). -->
+    <PackageReference Include="Newtonsoft.Json" Version="13.0.4" />
   </ItemGroup>
 
   <ItemGroup>

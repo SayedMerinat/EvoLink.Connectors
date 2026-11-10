@@ -1,7 +1,7 @@
 using System.Collections;
 using System.Globalization;
 using EvoLink.Connectors.Common;
-using EvoLink.Connectors.Odoo.Client;
+using EvoLink.Odoo.Client;
 using Ortolan.Core.Serialization;
 
 namespace EvoLink.Connectors.Odoo
@@ -19,21 +19,18 @@ namespace EvoLink.Connectors.Odoo
     /// </summary>
     public static class OdooValues
     {
-        public const string DateFormat = "yyyy-MM-dd";
-        public const string DateTimeFormat = "yyyy-MM-dd HH:mm:ss";
+        public const string DateFormat = OdooFormats.DateFormat;
+        public const string DateTimeFormat = OdooFormats.DateTimeFormat;
 
         /// <summary>Fields maintained by Odoo itself, never written.</summary>
-        public static readonly IReadOnlySet<string> MagicFields = new HashSet<string>(StringComparer.Ordinal)
-        {
-            "id", "display_name", "create_date", "create_uid", "write_date", "write_uid", "__last_update",
-        };
+        public static IReadOnlySet<string> MagicFields => OdooFieldInfo.MagicFields;
 
         /// <summary>
         /// True when the field can be written by the connector: not a magic field, not a one2many (needs commands),
         /// not a computed field without inverse (readonly and not stored).
         /// </summary>
         public static bool IsWritable(OdooFieldInfo field)
-            => !MagicFields.Contains(field.Name) && field.Type != "one2many" && !(field.Readonly && !field.Store);
+            => field.IsWritable;
 
         /// <summary>Value read from Odoo made comparable with the source values.</summary>
         public static object? FromOdoo(object? value, string? type)
@@ -146,22 +143,12 @@ namespace EvoLink.Connectors.Odoo
         public static object? ToPayload(object? comparable, OdooFieldInfo field)
             => field.Type switch
             {
-                "many2many" => new List<object?> { new List<object?> { 6L, 0L, comparable as IList ?? new List<object?>() } },
+                "many2many" => OdooCommands.Set((comparable as IList ?? new List<object?>()).Cast<object?>().Select(i => Convert.ToInt64(i, CultureInfo.InvariantCulture))),
                 _ => comparable ?? false,
             };
 
         internal static DateTime ToUtc(DateTime value, TimeZoneInfo timeZone)
-        {
-            var utc = value.Kind switch
-            {
-                DateTimeKind.Utc => value,
-                DateTimeKind.Local => value.ToUniversalTime(),
-                _ => DateTime.SpecifyKind(value - timeZone.GetUtcOffset(value), DateTimeKind.Utc),
-            };
-
-            // Odoo stores the datetimes to the second.
-            return utc.AddTicks(-(utc.Ticks % TimeSpan.TicksPerSecond));
-        }
+            => OdooFormats.ToUtc(value, timeZone);
 
         private static async Task<long?> ToIdAsync(object? value, OdooFieldInfo field, Func<string, string, Task<long?>>? resolveByName)
         {
