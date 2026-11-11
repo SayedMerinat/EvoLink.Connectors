@@ -134,7 +134,13 @@ Odoo 17.0 Enterprise (`dev2-evolink.odoo.com`), SQL Server LocalDB :
 - **Export de `product.template`** (369 714 articles, 9 champs) : table créée, tout écrit en 9 min 24, aucune erreur.
   1 624 prix à 0 restés 0, relations au format `[64, 'Produits EvoLink / …']` et `[42]`, dates en UTC, noms non CP1252
   intacts, archivés exclus. **Second passage : 369 714 inchangés, 0 réécriture**, en 7 min 37.
-- **Import de contacts** (`res.partner`, l'utilisateur de test n'ayant pas le droit de créer des articles) : 3 contacts
+- **Import d'articles** (`product.template`, la configuration « SQL → Odoo » ci-dessus) : 3 articles créés, chacun avec sa
+  variante `product.product` de même référence ; identifiants réécrits dans SQL (clé `ORTOLAN-TEST-O'NEIL` comprise) ;
+  catégorie donnée en `[107, 'Notes de frais']` ou `[107]` ; NULL non envoyés, donc valeurs par défaut d'Odoo à la création
+  (prix 1.00, catégorie « Produits EvoLink ») et description conservée à la mise à jour. Passage suivant : seuls les 2
+  articles modifiés réécrits (le nouveau prix arrive aussi sur la variante) ; puis 0 réécriture. Articles supprimés
+  ensuite, leurs variantes avec eux.
+- **Import de contacts** (`res.partner`) : 3 contacts
   créés, identifiants réécrits dans SQL (y compris pour la clé `ORTOLAN-TEST-O'NEIL`), Unicode intact dans Odoo, parent
   donné en `[10897, 'Ortolan Test SA']` posé, NULL qui ne vide pas le commentaire. Passages suivants : 0 création, 0
   réécriture. Contacts supprimés ensuite.
