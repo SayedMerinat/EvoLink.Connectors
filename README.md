@@ -22,12 +22,17 @@ Chaque connecteur est un **plugin** que le serveur Ortolan charge au démarrage.
 
 Les règles de conception sont décrites dans [docs/CONVENTIONS.md](docs/CONVENTIONS.md).
 
+Pour remplacer les outils OdooToolbox (`odootosql`, `sqltoodoo`), voir [docs/ODOOTOOLBOX.md](docs/ODOOTOOLBOX.md) : configurations
+complètes et options de compatibilité (création de table, relations au format `[5, 'Nom']`, NULL qui ne vide pas Odoo,
+nouvelles tentatives de lecture), toutes désactivées par défaut.
+
 ## Ce qui n'est pas encore vérifié
 
-Les 306 tests passent sur des passerelles simulées (SQLite réel pour SQL). Sur l'instance Ortolan de test, les 5 plugins
+Les 347 tests passent sur des passerelles simulées (SQLite réel pour SQL, et SQL Server LocalDB pour la création de table quand elle est installée). Sur l'instance Ortolan de test, les 5 plugins
 se chargent ensemble (68 types de modules) et une synchronisation SQL, une chaîne de transformers et l'échec propre d'une
-connexion M-Files (classé « source inaccessible ») ont été exécutés. **Aucun appel n'a encore été fait contre un vrai
-coffre M-Files, une vraie instance Odoo 17 ni un vrai serveur DocSeries** : à valider sur des environnements de test
+connexion M-Files (classé « source inaccessible ») ont été exécutés. Les connecteurs Odoo et SQL ont été essayés sur une
+instance Odoo 17 de développement (export de 369 714 articles, import de contacts, voir [docs/ODOOTOOLBOX.md](docs/ODOOTOOLBOX.md)).
+**Aucun appel n'a encore été fait contre un vrai coffre M-Files ni un vrai serveur DocSeries** : à valider sur des environnements de test
 (points précis listés dans les commentaires des passerelles `ComMFilesGateway`, `OdooJsonRpcClient`, `DocSeriesGateway`).
 
 Différences de comportement volontaires avec EvoBus à connaître pour une migration : `md5-hash` (ordre et format des

@@ -167,6 +167,15 @@ namespace EvoLink.Connectors.Sql
         [Description("Délai maximal d'une requête, en secondes.")]
         public int CommandTimeoutSeconds { get; set; } = 120;
 
+        [Description("Crée la table si elle n'existe pas : une colonne par propriété des entités, dans l'ordre où elles apparaissent, avec le type de columnTypes ou déduit des valeurs (SQL Server, MySQL, SQLite).")]
+        public bool CreateTable { get; set; }
+
+        [Description("Ajoute à la table les colonnes des propriétés qu'elle n'a pas encore (un champ ajouté à la source apparaît dans la table).")]
+        public bool AddMissingColumns { get; set; }
+
+        [Description("Type SQL de certaines colonnes créées, ex. { \"date_order\": \"DATE\", \"price\": \"MONEY\" }. Les autres sont déduits des valeurs (texte : NVARCHAR(MAX)).")]
+        public Dictionary<string, string> ColumnTypes { get; set; } = [];
+
         [JsonIgnore]
         protected override bool AppliesImmediately => !UseTransaction;
 
@@ -182,16 +191,30 @@ namespace EvoLink.Connectors.Sql
             _mapping = new FieldMapping(Fields, OnlyMappedFields);
             _gateway = CreateGateway();
 
+            var tableMissing = false;
+
             try
             {
                 await Guard(async () =>
                 {
                     await _gateway.OpenAsync(context.CancellationToken);
-                    _columnTypes = await _gateway.GetColumnTypesAsync($"SELECT * FROM {Quote(Table)} WHERE 1 = 0", context.CancellationToken);
 
-                    if (UseTransaction)
+                    if (await LoadColumnsAsync(input, context) is { } columns)
+                        _columnTypes = columns;
+                    else
+                        tableMissing = true;
+
+                    if (UseTransaction && !tableMissing)
                         await _gateway.BeginTransactionAsync(context.CancellationToken);
                 });
+
+                // createTable without any entity: no column to deduce, but nothing to write nor to delete either.
+                if (tableMissing)
+                {
+                    context.LogInfo($"[{DisplayName}] La table '{Table}' n'existe pas encore et aucune entité n'est à écrire : elle sera créée au premier enregistrement.");
+                    await CloseAsync(context);
+                    return input;
+                }
 
                 if (HasIdentity && !_columnTypes.ContainsKey(IdentityColumn!))
                     throw ConnectorGuard.Invalid(DisplayName, $"La colonne générée '{IdentityColumn}' n'existe pas dans la table '{Table}'.");
@@ -292,6 +315,62 @@ namespace EvoLink.Connectors.Sql
             entity.Metadata[IdMetadataKey] = Convert.ToString(id, CultureInfo.InvariantCulture) ?? string.Empty;
             entity.Metadata[TableMetadataKey] = Table;
         }
+
+        /// <summary>
+        /// Columns of the table. With <see cref="CreateTable"/> a missing table is created, with <see cref="AddMissingColumns"/> the
+        /// properties without column get one; nothing else of the table is ever changed (no DROP, no type change).
+        /// </summary>
+        /// <returns>The columns, or null when the table is missing and no entity gives its columns (nothing to synchronise).</returns>
+        private async Task<Dictionary<string, Type>?> LoadColumnsAsync(List<Entity> input, JobContext context)
+        {
+            var probe = $"SELECT * FROM {Quote(Table)} WHERE 1 = 0";
+
+            if (!CreateTable && !AddMissingColumns)
+                return await _gateway!.GetColumnTypesAsync(probe, context.CancellationToken);
+
+            if (!SqlSchema.Supports(Engine))
+                throw ConnectorGuard.Invalid(DisplayName, $"createTable et addMissingColumns ne sont disponibles qu'avec SqlServer, MySql et Sqlite (moteur : {Engine}).");
+
+            if (ColumnTypes.Values.Select(SqlSchema.CheckType).FirstOrDefault(e => e != null) is { } invalid)
+                throw ConnectorGuard.Invalid(DisplayName, invalid);
+
+            var types = new Dictionary<string, string>(ColumnTypes, StringComparer.OrdinalIgnoreCase);
+            var entities = input.Where(e => !e.IsFailed && e.SyncAction != SyncAction.Delete);
+            var wanted = SqlSchema.Plan(Engine, entities, ColumnOf, types, IdentityColumn);
+            Dictionary<string, Type> columns;
+
+            try
+            {
+                columns = await _gateway!.GetColumnTypesAsync(probe, context.CancellationToken);
+            }
+            catch (DbException) when (CreateTable && !_gateway!.IsConnectionBroken)
+            {
+                if (wanted.Count == 0 && !entities.Any())
+                    return null;
+
+                if (wanted.Count == 0)
+                    throw ConnectorGuard.Invalid(DisplayName, $"La table '{Table}' n'existe pas et aucune propriété des entités ne donne de colonne.");
+
+                await _gateway.ExecuteAsync(SqlSchema.CreateTable(_gateway.Dialect, Table, wanted, IdentityColumn), [], context.CancellationToken);
+                context.LogInfo($"[{DisplayName}] Table '{Table}' créée avec {wanted.Count + (HasIdentity ? 1 : 0)} colonne(s).");
+
+                return await _gateway.GetColumnTypesAsync(probe, context.CancellationToken);
+            }
+
+            var missing = AddMissingColumns ? wanted.Where(c => !columns.ContainsKey(c.Column)).ToList() : [];
+            if (missing.Count == 0)
+                return columns;
+
+            foreach (var (column, type) in missing)
+                await _gateway.ExecuteAsync(SqlSchema.AddColumn(_gateway.Dialect, Table, column, type), [], context.CancellationToken);
+
+            context.LogInfo($"[{DisplayName}] Colonne(s) ajoutée(s) à la table '{Table}' : {string.Join(", ", missing.Select(c => c.Column))}.");
+            return await _gateway.GetColumnTypesAsync(probe, context.CancellationToken);
+        }
+
+        /// <summary>Column of a property, null when the mapping leaves it out.</summary>
+        private string? ColumnOf(string property)
+            => _mapping.OnlyMappedFields && !Fields.ContainsKey(property) ? null : _mapping.ToField(property);
 
         private bool IsIdentity(string property)
             => HasIdentity && string.Equals(_mapping.ToField(property), IdentityColumn, StringComparison.OrdinalIgnoreCase);
@@ -452,7 +531,9 @@ namespace EvoLink.Connectors.Sql
                     => ValueConverter.ToInt64(value) ?? (ValueConverter.ToBoolean(value) is { } flag ? (flag ? 1L : 0L) : null),
                 TypeCode.Decimal => ValueConverter.ToDecimal(value),
                 TypeCode.Double or TypeCode.Single => ValueConverter.ToDecimal(value) is { } d ? (double)d : null,
-                TypeCode.DateTime => ValueConverter.ToDateTime(value),
+                // A DATETIME column keeps no time zone: a local or UTC value is stored, then read back, without its kind. It is
+                // compared the same way, otherwise every row would look modified at every run.
+                TypeCode.DateTime => ValueConverter.ToDateTime(value) is { } dateTime ? DateTime.SpecifyKind(dateTime, DateTimeKind.Unspecified) : null,
                 _ when type == typeof(Guid) => Guid.TryParse(ValueConverter.ToText(value), out var guid) ? guid : null,
                 _ when type == typeof(DateTimeOffset) => ValueConverter.ToDateTime(value) is { } dt ? new DateTimeOffset(dt) : null,
                 _ => value,

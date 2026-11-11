@@ -1,6 +1,7 @@
 using EvoLink.Connectors.Common;
 using EvoLink.Odoo.Client;
 using Ortolan.Core.Exceptions;
+using Ortolan.Core.Pipeline;
 
 namespace EvoLink.Connectors.Odoo
 {
@@ -42,6 +43,26 @@ namespace EvoLink.Connectors.Odoo
             {
                 throw ConnectorGuard.Invalid(module, $"Fuseau horaire '{timeZone}' inconnu (ex. Europe/Zurich).");
             }
+        }
+
+        /// <summary>Retries of the paged reads (none when <paramref name="attempts"/> is 0), logged as warnings.</summary>
+        public static OdooReadRetry CreateReadRetry(string module, int attempts, int delaySeconds, bool shrinkPage, JobContext context)
+        {
+            if (attempts < 0 || delaySeconds < 0)
+                throw ConnectorGuard.Invalid(module, "Le nombre de nouvelles tentatives (readRetries) et leur délai (readRetryDelaySeconds) ne peuvent pas être négatifs.");
+
+            if (attempts == 0)
+                return OdooReadRetry.None;
+
+            return new OdooReadRetry
+            {
+                Attempts = attempts,
+                Delay = TimeSpan.FromSeconds(delaySeconds),
+                ShrinkPage = shrinkPage,
+                OnRetry = info => context.LogWarning(
+                    $"[{module}] Odoo indisponible pendant la lecture ({info.Error.Message}) : nouvelle tentative {info.Attempt}/{info.MaxAttempts}"
+                    + (shrinkPage ? $", pages de {info.PageSize} enregistrement(s)." : ".")),
+            };
         }
 
         public static OdooContext CreateContext(string? language, bool includeArchived)

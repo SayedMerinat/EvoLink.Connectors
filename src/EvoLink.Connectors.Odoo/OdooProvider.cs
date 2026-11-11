@@ -78,6 +78,18 @@ namespace EvoLink.Connectors.Odoo
         [Description("Nombre maximal d'enregistrements lus (0 = tous).")]
         public int Limit { get; set; }
 
+        [Description("Format des relations : Id (many2one = identifiant, x2many = liste d'identifiants) ou OdooToolbox (texte \"[5, 'Nom']\" et \"[1, 2]\", liste vide = null, comme odootosql).")]
+        public OdooRelationFormat RelationFormat { get; set; } = OdooRelationFormat.Id;
+
+        [Description("Nouvelles tentatives d'une page en échec parce qu'Odoo est indisponible (502, réseau, délai dépassé). 0 = aucune.")]
+        public int ReadRetries { get; set; }
+
+        [Description("Attente avant la première nouvelle tentative, en secondes (doublée à chaque tentative suivante).")]
+        public int ReadRetryDelaySeconds { get; set; } = 5;
+
+        [Description("Divise la page par deux après un échec (un 502 vient souvent d'une page trop lourde) et garde cette taille pour la suite.")]
+        public bool ShrinkPageOnError { get; set; } = true;
+
         [Description("Lecture incrémentale : en mode incrémental, ne lit que les enregistrements modifiés depuis la dernière synchronisation réussie.")]
         public bool Incremental { get; set; }
 
@@ -114,7 +126,8 @@ namespace EvoLink.Connectors.Odoo
             if (Incremental)
                 domain = AddIncrementalCriterion(domain, modelFields, context);
 
-            var records = await CallAsync(() => client.SearchReadAllAsync(Model, domain, readFields, PageSize, Limit, Order, odooContext, context.CancellationToken), connection);
+            var retry = OdooModuleSupport.CreateReadRetry(DisplayName, ReadRetries, ReadRetryDelaySeconds, ShrinkPageOnError, context);
+            var records = await CallAsync(() => client.SearchReadAllAsync(Model, domain, readFields, retry, PageSize, Limit, Order, odooContext, context.CancellationToken), connection);
 
             return records.Select(r => ToEntity(r, modelFields, mapping, timeZone)).ToList();
         }
@@ -170,7 +183,9 @@ namespace EvoLink.Connectors.Odoo
             foreach (var (field, value) in record)
             {
                 var type = modelFields.TryGetValue(field, out var info) ? info.Type : null;
-                values[field] = OdooValues.FromOdooForEntity(value, type, timeZone);
+                values[field] = RelationFormat == OdooRelationFormat.OdooToolbox && OdooToolboxFormat.IsRelation(type)
+                    ? OdooToolboxFormat.FromOdoo(value, type)
+                    : OdooValues.FromOdooForEntity(value, type, timeZone);
 
                 if (IncludeMany2OneNames && type == "many2one")
                     values[field + "_name"] = value is System.Collections.IList { Count: > 1 } pair ? pair[1] : null;

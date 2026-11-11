@@ -42,6 +42,54 @@ namespace EvoLink.Odoo.Client
             return records;
         }
 
+        /// <summary>
+        /// Same paged read, retrying a page that failed because Odoo was unavailable (502 of a worker killed on a too large read,
+        /// network, timeout), with a smaller page when <see cref="OdooReadRetry.ShrinkPage"/> is set; the smaller size is kept for
+        /// the next pages. Only reads are retried: they can be run twice without effect.
+        /// </summary>
+        public static async Task<List<Dictionary<string, object?>>> SearchReadAllAsync(this IOdooClient client, string model, JArray domain, IReadOnlyCollection<string>? fields,
+            OdooReadRetry retry, int pageSize = 500, int maxRecords = 0, string? order = "id", OdooContext? context = null, CancellationToken cancellationToken = default)
+        {
+            pageSize = pageSize > 0 ? pageSize : 500;
+
+            var records = new List<Dictionary<string, object?>>();
+            var failures = 0;
+
+            while (true)
+            {
+                var limit = maxRecords > 0 ? Math.Min(pageSize, maxRecords - records.Count) : pageSize;
+                if (limit <= 0)
+                    break;
+
+                IReadOnlyList<Dictionary<string, object?>> page;
+
+                try
+                {
+                    page = await client.SearchReadAsync(model, domain, fields, records.Count, limit, order, context, cancellationToken);
+                }
+                catch (OdooUnavailableException ex) when (failures < retry.Attempts)
+                {
+                    failures++;
+
+                    if (retry.ShrinkPage && pageSize > retry.MinPageSize)
+                        pageSize = Math.Max(retry.MinPageSize, pageSize / 2);
+
+                    retry.OnRetry?.Invoke(new OdooRetryInfo(failures, retry.Attempts, pageSize, ex));
+                    await retry.Wait(retry.DelayOf(failures), cancellationToken);
+                    continue;
+                }
+
+                // A successful page gives back every attempt: a long export survives several isolated incidents.
+                failures = 0;
+                records.AddRange(page);
+
+                if (page.Count < limit)
+                    break;
+            }
+
+            return records;
+        }
+
         /// <summary>Records matching <paramref name="domain"/> (every page).</summary>
         public static Task<List<Dictionary<string, object?>>> FindAsync(this IOdooClient client, string model, OdooDomainBuilder domain, IReadOnlyCollection<string>? fields = null,
             OdooContext? context = null, CancellationToken cancellationToken = default)

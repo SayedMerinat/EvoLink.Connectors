@@ -79,13 +79,23 @@ namespace EvoLink.Connectors.Odoo
 
         /// <summary>
         /// Source value converted into the representation <see cref="FromOdoo"/> gives for the same Odoo value.
-        /// Relations given as text are resolved by <paramref name="resolveByName"/> (null = only identifiers are accepted).
+        /// Relations given as text are resolved by <paramref name="resolveByName"/> (null = only identifiers are accepted). With
+        /// <see cref="OdooRelationFormat.OdooToolbox"/>, the texts <c>[5, 'Nom']</c> / <c>(5,)</c> and <c>[1, 2]</c> / <c>1,2</c> are read first.
         /// </summary>
         /// <exception cref="FormatException">The value can't be converted into the type of the field.</exception>
         /// <exception cref="OdooRelationNotFoundException">No record of the relation has the given name.</exception>
-        public static async Task<object?> ToComparableAsync(object? value, OdooFieldInfo field, TimeZoneInfo timeZone, Func<string, string, Task<long?>>? resolveByName)
+        public static async Task<object?> ToComparableAsync(object? value, OdooFieldInfo field, TimeZoneInfo timeZone, Func<string, string, Task<long?>>? resolveByName,
+            OdooRelationFormat relationFormat = OdooRelationFormat.Id)
         {
             value = ValueNormalizer.Normalize(value);
+
+            if (relationFormat == OdooRelationFormat.OdooToolbox)
+            {
+                if (field.Type == "many2one" && OdooToolboxFormat.ParseMany2One(value) is { } id)
+                    value = id;
+                else if (field.Type == "many2many" && OdooToolboxFormat.ParseIds(value) is { } ids)
+                    value = ids;
+            }
 
             switch (field.Type)
             {
@@ -146,6 +156,26 @@ namespace EvoLink.Connectors.Odoo
                 "many2many" => OdooCommands.Set((comparable as IList ?? new List<object?>()).Cast<object?>().Select(i => Convert.ToInt64(i, CultureInfo.InvariantCulture))),
                 _ => comparable ?? false,
             };
+
+        /// <summary>
+        /// Value of an html field as the synchroniser compares it. Odoo stores a plain text written in an html field as
+        /// <c>&lt;p&gt;text&lt;/p&gt;</c> (entities escaped, line breaks as <c>&lt;br&gt;</c>): that single paragraph is compared as
+        /// its text, so that an unchanged text is not seen as modified at every run. Any other html is compared as is.
+        /// </summary>
+        public static object? HtmlComparable(object? value)
+        {
+            if (value is not string html)
+                return value;
+
+            var match = System.Text.RegularExpressions.Regex.Match(html.Trim(), @"^<p>(?<text>(?:[^<]|<br\s*/?>)*)</p>$",
+                System.Text.RegularExpressions.RegexOptions.Singleline | System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+
+            if (!match.Success)
+                return html;
+
+            var text = System.Text.RegularExpressions.Regex.Replace(match.Groups["text"].Value, @"<br\s*/?>", "\n", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+            return System.Net.WebUtility.HtmlDecode(text);
+        }
 
         internal static DateTime ToUtc(DateTime value, TimeZoneInfo timeZone)
             => OdooFormats.ToUtc(value, timeZone);

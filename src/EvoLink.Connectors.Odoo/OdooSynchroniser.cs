@@ -46,6 +46,10 @@ namespace EvoLink.Connectors.Odoo
         private CancellationToken _cancellationToken;
         private JobContext? _jobContext;
 
+        /// <summary>Properties left out of each prepared copy because their value was null (<see cref="SkipNullValues"/>).</summary>
+        private readonly Dictionary<Entity, List<string>> _skipped = new(ReferenceEqualityComparer.Instance);
+        private List<Entity> _prepared = [];
+
         [Description("URL de l'instance Odoo, ex. https://societe.odoo.com.")]
         public string Url { get; set; } = string.Empty;
 
@@ -101,6 +105,21 @@ namespace EvoLink.Connectors.Odoo
         [Description("Nombre d'enregistrements lus par appel lors de la lecture de la cible.")]
         public int PageSize { get; set; } = 500;
 
+        [Description("Format des relations reçues : Id (identifiants, ou noms avec resolveRelationsByName) ou OdooToolbox (accepte aussi les textes \"[5, 'Nom']\", \"(5,)\", \"[1, 2]\" et \"1,2\" de sqltoodoo).")]
+        public OdooRelationFormat RelationFormat { get; set; } = OdooRelationFormat.Id;
+
+        [Description("Une propriété valant null n'est ni comparée ni écrite : elle ne vide jamais le champ Odoo, et à la création c'est la valeur par défaut d'Odoo qui s'applique (comme sqltoodoo).")]
+        public bool SkipNullValues { get; set; }
+
+        [Description("Nouvelles tentatives d'une page de la lecture de la cible en échec parce qu'Odoo est indisponible. 0 = aucune.")]
+        public int ReadRetries { get; set; }
+
+        [Description("Attente avant la première nouvelle tentative de lecture, en secondes (doublée à chaque tentative suivante).")]
+        public int ReadRetryDelaySeconds { get; set; } = 5;
+
+        [Description("Divise la page de lecture par deux après un échec et garde cette taille pour la suite.")]
+        public bool ShrinkPageOnError { get; set; } = true;
+
         /// <summary>Client of the target, overridable for the tests.</summary>
         protected virtual IOdooClient CreateClient(OdooConnection connection)
             => new OdooJsonRpcClient(connection);
@@ -135,6 +154,7 @@ namespace EvoLink.Connectors.Odoo
 
                 var originals = new Dictionary<Entity, Entity>(ReferenceEqualityComparer.Instance);
                 var prepared = await PrepareAsync(input, originals, context);
+                _prepared = prepared;
 
                 // The base class compares the sync fields: they are limited to the writable fields of the model, otherwise
                 // a property unknown to Odoo would always look different and the record would be updated at every run.
@@ -148,6 +168,8 @@ namespace EvoLink.Connectors.Odoo
             {
                 SyncFields = configured;
                 _relations.Clear();
+                _skipped.Clear();
+                _prepared = [];
                 _client.Dispose();
                 _client = null;
                 _jobContext = null;
@@ -157,9 +179,38 @@ namespace EvoLink.Connectors.Odoo
         protected override async Task<IEnumerable<Entity>> ReadTargetAsync(JobContext context)
         {
             var fields = _fieldsByProperty.Values.Select(f => f.Name).Prepend("id").Distinct(StringComparer.Ordinal).ToList();
-            var records = await CallAsync(() => Client.SearchReadAllAsync(Model, _domain, fields, PageSize, 0, "id", _odooContext, _cancellationToken));
+            var retry = OdooModuleSupport.CreateReadRetry(DisplayName, ReadRetries, ReadRetryDelaySeconds, ShrinkPageOnError, context);
+            var records = await CallAsync(() => Client.SearchReadAllAsync(Model, _domain, fields, retry, PageSize, 0, "id", _odooContext, _cancellationToken));
+            var target = records.Select(ToEntity).ToList();
 
-            return records.Select(ToEntity).ToList();
+            if (_skipped.Count > 0)
+                FillSkippedFromTarget(target);
+
+            return target;
+        }
+
+        /// <summary>
+        /// A null value left out by <see cref="SkipNullValues"/> takes the value of the existing record: it is then neither seen as a
+        /// change nor written. A record to create keeps it out, so that Odoo applies its default value.
+        /// </summary>
+        private void FillSkippedFromTarget(List<Entity> target)
+        {
+            var index = new Dictionary<string, Entity>(StringComparer.Ordinal);
+            foreach (var record in target)
+            {
+                if (SyncComparer.ComputeKey(record, _keyProperties) is { } key)
+                    index.TryAdd(key, record);
+            }
+
+            foreach (var copy in _prepared)
+            {
+                if (!_skipped.TryGetValue(copy, out var properties) || SyncComparer.ComputeKey(copy, _keyProperties) is not { } key
+                    || !index.TryGetValue(key, out var existing))
+                    continue;
+
+                foreach (var property in properties)
+                    copy[property] = existing.GetValueOrDefault(property);
+            }
         }
 
         protected override async Task<Entity> CreateAsync(Entity source, JobContext context)
@@ -293,9 +344,20 @@ namespace EvoLink.Connectors.Odoo
 
                         var field = _fieldsByProperty[property];
 
+                        // Never for a key: an entity without key is reported as such by the base class.
+                        if (SkipNullValues && value == null && !_keyProperties.Contains(property, StringComparer.OrdinalIgnoreCase))
+                        {
+                            copy.Remove(property);
+                            Skipped(copy).Add(property);
+                            continue;
+                        }
+
                         try
                         {
-                            copy[property] = await OdooValues.ToComparableAsync(value, field, _timeZone, ResolveRelationsByName ? ResolveByNameAsync : null);
+                            copy[property] = await OdooValues.ToComparableAsync(value, field, _timeZone, ResolveRelationsByName ? ResolveByNameAsync : null, RelationFormat);
+
+                            if (field.Type == "html")
+                                copy[property] = OdooValues.HtmlComparable(copy[property]);
                         }
                         catch (OdooRelationNotFoundException ex) when (!FailWhenNotFound && !_keyProperties.Contains(property, StringComparer.OrdinalIgnoreCase))
                         {
@@ -319,6 +381,14 @@ namespace EvoLink.Connectors.Odoo
             }
 
             return prepared;
+        }
+
+        private List<string> Skipped(Entity copy)
+        {
+            if (!_skipped.TryGetValue(copy, out var properties))
+                _skipped[copy] = properties = [];
+
+            return properties;
         }
 
         /// <summary>
@@ -355,7 +425,10 @@ namespace EvoLink.Connectors.Odoo
             var entity = new Entity();
 
             foreach (var (property, field) in _fieldsByProperty)
-                entity[property] = OdooValues.FromOdoo(record.GetValueOrDefault(field.Name), field.Type);
+            {
+                var value = OdooValues.FromOdoo(record.GetValueOrDefault(field.Name), field.Type);
+                entity[property] = field.Type == "html" ? OdooValues.HtmlComparable(value) : value;
+            }
 
             if (ValueConverter.ToInt64(record.GetValueOrDefault("id")) is { } id)
                 entity.Metadata[IdMetadataKey] = id.ToString(CultureInfo.InvariantCulture);
