@@ -91,3 +91,8 @@ Déjà présents dans Ortolan.Modules (ne pas refaire) : `rename`, `set-property
 `contains` (PropertyStringContainsCondition), `property-compare` (PropertyValueComparisonCondition).
 Les clés de fichier d'EvoBus (`FILE-FilePath`, …) restent identiques pour faciliter la migration, en corrigeant le bug
 `LastModifiedBy` (`FILE-LastModifiedBy`).
+
+Dans un job, `composite`, `conditional` et `if-then-else` lancent leurs sous-transformers comme des modules
+(`ActAsync`) sur les entités concernées, avec un contexte imbriqué (`JobContext.CreateNested`, sans suivi de reprise ni
+progression propres). Un sous-module garde ainsi tout son cycle de vie : connexion ouverte avant les entités et fermée
+après (`odoo-id-lookup`, `sql-lookup`…), cache partagé, gestion des erreurs entité par entité. L'ordre du flux est conservé.

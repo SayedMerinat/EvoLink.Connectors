@@ -193,6 +193,106 @@ namespace EvoLink.Connectors.Transformers.Tests
             Assert.IsType<Md5HashTransformer>(FromJson<CompositeTransformer>(json).Transformers[0]);
         }
 
+        [Fact]
+        public async Task Conditional_RunsItsTransformerAsAModule_OnTheMatchingEntitiesOnly()
+        {
+            var lookup = new PreparedTransformer();
+            var transformer = new ConditionalTransformer { Condition = new EqualsCondition { Property = "type", Value = "A" }, Transformer = lookup };
+            var input = new List<Entity> { Entity(("type", "A"), ("n", 1)), Entity(("type", "B"), ("n", 2)), Entity(("type", "A"), ("n", 3)) };
+
+            var output = await transformer.ActAsync(input, Context());
+
+            Assert.Equal([2], lookup.Batches);
+            Assert.Equal([1L, 2L, 3L], output.Select(e => Convert.ToInt64(e["n"])));
+            Assert.Equal(["oui", null, "oui"], output.Select(e => e.GetValueOrDefault("prepared") as string));
+            Assert.All(output, e => Assert.False(e.IsFailed));
+        }
+
+        [Fact]
+        public async Task Composite_RunsEachSubTransformerOnceOnTheWholeFlow()
+        {
+            var first = new PreparedTransformer();
+            var second = new PreparedTransformer { Property = "second" };
+            var composite = new CompositeTransformer { Transformers = [first, second] };
+
+            var output = await composite.ActAsync([Entity(("n", 1)), Entity(("n", 2))], Context());
+
+            Assert.Equal([2], first.Batches);
+            Assert.Equal([2], second.Batches);
+            Assert.All(output, e => Assert.Equal("oui", e["second"]));
+        }
+
+        [Fact]
+        public async Task IfThenElse_RunsEachBranchAsAModuleOnItsEntities()
+        {
+            var then = new PreparedTransformer { Property = "then" };
+            var @else = new PreparedTransformer { Property = "else" };
+            var transformer = new IfThenElseTransformer { Condition = new EqualsCondition { Property = "type", Value = "A" }, Then = then, Else = @else };
+
+            var output = await transformer.ActAsync([Entity(("type", "B")), Entity(("type", "A")), Entity(("type", "B"))], Context());
+
+            Assert.Equal([1], then.Batches);
+            Assert.Equal([2], @else.Batches);
+            Assert.Equal(["B", "A", "B"], output.Select(e => e["type"] as string));
+            Assert.True(output[1].Has("then") && !output[1].Has("else"));
+            Assert.True(output[0].Has("else") && output[2].Has("else"));
+        }
+
+        [Fact]
+        public async Task Conditional_KeepsTheOrder_WhenItsTransformerRemovesOrReplacesEntities()
+        {
+            var transformer = new ConditionalTransformer
+            {
+                Condition = new EqualsCondition { Property = "type", Value = "A" },
+                Transformer = new ReplaceOrDropTransformer(),
+            };
+            var input = new List<Entity> { Entity(("type", "A"), ("n", 1)), Entity(("type", "B"), ("n", 2)), Entity(("type", "A"), ("n", 3)), Entity(("type", "A"), ("n", 4)) };
+
+            var output = await transformer.ActAsync(input, Context());
+
+            // 1 is replaced by a copy, 3 is removed, 4 is kept as is.
+            Assert.Equal([1L, 2L, 4L], output.Select(e => Convert.ToInt64(e["n"])));
+            Assert.NotSame(input[0], output[0]);
+            Assert.True(output[0].Has("copy"));
+            Assert.Same(input[3], output[2]);
+        }
+
+        [Fact]
+        public async Task Conditional_LeavesTheFailedEntities_AndFailsAnEntityWhoseSubTransformerFails()
+        {
+            var failed = Entity(("type", "A"), ("n", "1"));
+            failed.SyncResult = SyncResult.Failed;
+            var transformer = new ConditionalTransformer
+            {
+                Condition = new EqualsCondition { Property = "type", Value = "A" },
+                Transformer = new ArithmeticTransformer { From = "n", Operand = 1 },
+            };
+
+            var output = await transformer.ActAsync([failed, Entity(("type", "A"), ("n", "abc")), Entity(("type", "A"), ("n", "1"))], Context());
+
+            Assert.Equal("1", output[0]["n"]);
+            Assert.True(output[1].IsFailed);
+            Assert.Equal(2m, output[2]["n"]);
+        }
+
+        [Fact]
+        public async Task SubTransformer_GetsANestedContext_WithoutTrackerAndWithItsOwnProgress()
+        {
+            var lookup = new PreparedTransformer();
+            var context = Context();
+            var composite = new CompositeTransformer { Transformers = [lookup] };
+
+            await composite.ActAsync([Entity(("n", 1)), Entity(("n", 2)), Entity(("n", 3))], context);
+
+            Assert.NotNull(lookup.Context);
+            Assert.NotSame(context, lookup.Context);
+            Assert.Equal(context.JobId, lookup.Context!.JobId);
+            Assert.Same(context.Report, lookup.Context.Report);
+            Assert.Null(lookup.Context.Tracker);
+            Assert.NotSame(context.Progress, lookup.Context.Progress);
+            Assert.Equal(3, context.Progress.Processed);
+        }
+
         internal static string Md5(string text)
             => Convert.ToHexStringLower(MD5.HashData(Encoding.UTF8.GetBytes(text)));
 
@@ -200,6 +300,62 @@ namespace EvoLink.Connectors.Transformers.Tests
         {
             public override Task<Entity?> TransformAsync(Entity entity, Ortolan.Core.Pipeline.JobContext context)
                 => Task.FromResult<Entity?>(null);
+        }
+
+        /// <summary>Like odoo-id-lookup: only works between the preparation and the release done by its ActAsync.</summary>
+        private sealed class PreparedTransformer : TransformerModule
+        {
+            private bool _prepared;
+
+            public string Property { get; set; } = "prepared";
+            public List<int> Batches { get; } = [];
+            public Ortolan.Core.Pipeline.JobContext? Context { get; private set; }
+
+            public override async Task<List<Entity>> ActAsync(List<Entity> input, Ortolan.Core.Pipeline.JobContext context)
+            {
+                Batches.Add(input.Count);
+                Context = context;
+                _prepared = true;
+
+                try
+                {
+                    return await base.ActAsync(input, context);
+                }
+                finally
+                {
+                    _prepared = false;
+                }
+            }
+
+            public override Task<Entity?> TransformAsync(Entity entity, Ortolan.Core.Pipeline.JobContext context)
+            {
+                if (!_prepared)
+                    throw new InvalidOperationException("Le client n'est pas initialisé.");
+
+                entity[Property] = "oui";
+                return Task.FromResult<Entity?>(entity);
+            }
+        }
+
+        /// <summary>Replaces the entity n = 1 by a copy and removes the entity n = 3.</summary>
+        private sealed class ReplaceOrDropTransformer : TransformerModule
+        {
+            public override Task<Entity?> TransformAsync(Entity entity, Ortolan.Core.Pipeline.JobContext context)
+            {
+                var n = Convert.ToInt64(entity["n"]);
+
+                if (n == 3)
+                    return Task.FromResult<Entity?>(null);
+
+                if (n != 1)
+                    return Task.FromResult<Entity?>(entity);
+
+                var copy = new Entity();
+                foreach (var (key, value) in entity.Properties)
+                    copy[key] = value;
+                copy["copy"] = true;
+                return Task.FromResult<Entity?>(copy);
+            }
         }
     }
 
