@@ -18,8 +18,12 @@ Les options utilisées ici sont toutes **désactivées par défaut** : un servic
 
 ## Odoo → SQL (`odootosql`)
 
-Un service par modèle. Comme dans OdooToolbox, l'échec d'un modèle n'arrête donc pas les autres. Pour les lancer
-ensemble, abonnez-les au même événement planifié.
+Deux façons de faire, avec le même comportement qu'OdooToolbox (l'échec d'un modèle n'arrête pas les autres) :
+- **Un service, un stage par modèle** : chaque stage a `"isolated": true` (nouveau flux) et `"continueOnFailure": true`.
+  Les modèles sont exportés l'un après l'autre dans un seul job, qui se termine « avec erreurs » si un modèle a échoué.
+  Voir « Stages isolés » dans `docs/ARCHITECTURE.md` d'Ortolan.
+- **Un service par modèle** (ci-dessous), abonnés au même événement planifié : chaque modèle a son propre rapport et sa
+  propre politique de relance.
 
 ```jsonc
 {
