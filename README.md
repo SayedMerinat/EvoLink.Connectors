@@ -121,3 +121,27 @@ synchronisation reste rejouable, et un job repris retrouve le produit créé par
 `identityColumn` n'est jamais écrite ni comparée, et ne peut pas être un champ clé. Sa valeur est relue par la clé après
 l'insertion : cela fonctionne avec tous les moteurs (IDENTITY, AUTO_INCREMENT, séquence, valeur par défaut, déclencheur),
 y compris dans une transaction (`useTransaction`).
+
+## Miroir Odoo : archiver au lieu de supprimer, et réactiver
+
+En mode `Mirror`, `odoo-synchroniser` supprime les enregistrements de son périmètre (`filters` / `domain`) absents de la
+source. Pour des produits, déjà utilisés dans des devis ou des factures, on archive plutôt :
+
+- `"archiveInsteadOfDelete": true` : un enregistrement absent de la source est archivé (`active = false`).
+- `"reactivateArchived": true` (avec le précédent) : les enregistrements archivés sont lus aussi. Celui qui revient dans la
+  source est **réactivé** au lieu d'être recréé en double ; ceux qui restent absents ne sont pas réécrits à chaque passage.
+  Quand un enregistrement actif et un archivé ont la même clé, c'est l'actif qui est synchronisé.
+
+Le périmètre doit inclure les enregistrements archivés à retrouver. Exemple (export Concerto, produits fournis par Alltron
+et ALSO) : un produit archivé a perdu ses entrées fournisseurs, le domaine ajoute donc les produits archivés qui ont un
+numéro fabricant ; seuls ceux présents dans l'export sont gardés.
+
+```jsonc
+{ "$type": "odoo-synchroniser", "model": "product.template", "keyFields": ["ManufacturerNumber"],
+  "domain": "[\"|\", [\"seller_ids.partner_id\", \"in\", [7242, 5806]], \"&\", [\"active\", \"=\", false], [\"x_studio_numero_fabricant\", \"!=\", false]]",
+  "fields": { "ManufacturerNumber": "x_studio_numero_fabricant", "ProductDescription": "name" }, "onlyMappedFields": true,
+  "archiveInsteadOfDelete": true, "reactivateArchived": true }
+```
+
+En `Mirror`, les enregistrements archivés ou supprimés repartent dans le flux après le synchroniser : un `filter` sur une
+propriété de la source (ex. `has-value` sur `DistributorPartNumber`) les retire avant les modules suivants.

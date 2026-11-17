@@ -46,6 +46,12 @@ namespace EvoLink.Connectors.Odoo
         private CancellationToken _cancellationToken;
         private JobContext? _jobContext;
 
+        /// <summary>Property carrying the "active" field when <see cref="ReactivateArchived"/> is set (null otherwise).</summary>
+        private string? _activeProperty;
+
+        /// <summary>Internal property used for the "active" field when no property of the entities is mapped to it.</summary>
+        private const string InternalActiveProperty = "odoo.active";
+
         /// <summary>Properties left out of each prepared copy because their value was null (<see cref="SkipNullValues"/>).</summary>
         private readonly Dictionary<Entity, List<string>> _skipped = new(ReferenceEqualityComparer.Instance);
         private List<Entity> _prepared = [];
@@ -83,6 +89,9 @@ namespace EvoLink.Connectors.Odoo
 
         [Description("Archive l'enregistrement (active = false) au lieu de le supprimer.")]
         public bool ArchiveInsteadOfDelete { get; set; }
+
+        [Description("Avec archiveInsteadOfDelete : lit aussi les enregistrements archivés. Un enregistrement archivé présent dans la source est réactivé (au lieu d'en créer un second) ; un enregistrement déjà archivé absent de la source n'est pas réécrit à chaque passage.")]
+        public bool ReactivateArchived { get; set; }
 
         [Description("Les many2one / many2many donnés sous forme de texte sont recherchés par nom (name_search) dans le modèle lié ; sinon seuls des identifiants sont acceptés.")]
         public bool ResolveRelationsByName { get; set; }
@@ -128,7 +137,10 @@ namespace EvoLink.Connectors.Odoo
         {
             _connection = OdooModuleSupport.CreateConnection(DisplayName, Url, Database, Username, ApiKey, TimeoutSeconds, Model);
             _timeZone = OdooModuleSupport.ResolveTimeZone(DisplayName, TimeZone);
-            _odooContext = OdooModuleSupport.CreateContext(Language, IncludeArchived);
+            if (ReactivateArchived && !ArchiveInsteadOfDelete)
+                throw ConnectorGuard.Invalid(DisplayName, "reactivateArchived ne s'utilise qu'avec archiveInsteadOfDelete.");
+
+            _odooContext = OdooModuleSupport.CreateContext(Language, IncludeArchived || ReactivateArchived);
             _domain = OdooDomain.Build(Filters, Domain, DisplayName);
             _cancellationToken = context.CancellationToken;
             _jobContext = context;
@@ -151,10 +163,18 @@ namespace EvoLink.Connectors.Odoo
                     throw ConnectorGuard.Invalid(DisplayName, $"Le modèle Odoo '{Model}' n'a pas de champ 'active' : impossible d'archiver.");
 
                 ResolveProperties(input, keyFields, configured ?? context.Sync.SyncFields, context);
+                ResolveActiveProperty();
 
                 var originals = new Dictionary<Entity, Entity>(ReferenceEqualityComparer.Instance);
                 var prepared = await PrepareAsync(input, originals, context);
                 _prepared = prepared;
+
+                // Every record of the source is active: an archived record found by its key is reactivated by the update.
+                if (_activeProperty != null)
+                {
+                    foreach (var copy in prepared.Where(e => !e.IsFailed && e.SyncAction != SyncAction.Delete && !e.Has(_activeProperty)))
+                        copy[_activeProperty] = true;
+                }
 
                 // The base class compares the sync fields: they are limited to the writable fields of the model, otherwise
                 // a property unknown to Odoo would always look different and the record would be updated at every run.
@@ -170,6 +190,7 @@ namespace EvoLink.Connectors.Odoo
                 _relations.Clear();
                 _skipped.Clear();
                 _prepared = [];
+                _activeProperty = null;
                 _client.Dispose();
                 _client = null;
                 _jobContext = null;
@@ -183,10 +204,59 @@ namespace EvoLink.Connectors.Odoo
             var records = await CallAsync(() => Client.SearchReadAllAsync(Model, _domain, fields, retry, PageSize, 0, "id", _odooContext, _cancellationToken));
             var target = records.Select(ToEntity).ToList();
 
+            if (_activeProperty != null)
+                target = KeepUsefulArchived(target, context);
+
             if (_skipped.Count > 0)
                 FillSkippedFromTarget(target);
 
             return target;
+        }
+
+        /// <summary>
+        /// <see cref="ReactivateArchived"/>: the property written to the "active" field, the one mapped to it by the configuration
+        /// or an internal one, compared and written like the other synchronised properties.
+        /// </summary>
+        private void ResolveActiveProperty()
+        {
+            _activeProperty = null;
+
+            if (!ReactivateArchived)
+                return;
+
+            _activeProperty = _fieldsByProperty.FirstOrDefault(p => p.Value.Name == "active").Key;
+
+            if (_activeProperty == null)
+            {
+                _activeProperty = InternalActiveProperty;
+                _fieldsByProperty[_activeProperty] = _modelFields["active"];
+            }
+
+            if (!_writableProperties.Contains(_activeProperty, StringComparer.OrdinalIgnoreCase))
+                _writableProperties.Add(_activeProperty);
+        }
+
+        /// <summary>
+        /// <see cref="ReactivateArchived"/>: an archived record is only useful when the source still has its key (it is then
+        /// reactivated); the others are already archived and are left out, so that the mirror doesn't archive them again.
+        /// The active records come first: when an active and an archived record share a key, the active one is synchronised.
+        /// </summary>
+        private List<Entity> KeepUsefulArchived(List<Entity> target, JobContext context)
+        {
+            var sourceKeys = _prepared.Where(e => !e.IsFailed && e.SyncAction != SyncAction.Delete)
+                .Select(e => SyncComparer.ComputeKey(e, _keyProperties))
+                .Where(k => k != null)
+                .ToHashSet(StringComparer.Ordinal);
+
+            bool IsArchived(Entity record) => record.GetValueOrDefault(_activeProperty!) is false;
+
+            var archived = target.Where(IsArchived).ToList();
+            var kept = archived.Where(r => SyncComparer.ComputeKey(r, _keyProperties) is { } key && sourceKeys.Contains(key)).ToList();
+
+            if (archived.Count > 0)
+                context.LogInfo($"[{DisplayName}] {archived.Count} enregistrement(s) archivé(s) lu(s) : {kept.Count} présent(s) dans la source seront réactivés, les autres restent archivés.");
+
+            return [.. target.Where(r => !IsArchived(r)), .. kept];
         }
 
         /// <summary>

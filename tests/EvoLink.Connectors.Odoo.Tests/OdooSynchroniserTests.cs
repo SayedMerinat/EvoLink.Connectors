@@ -133,6 +133,60 @@ namespace EvoLink.Connectors.Odoo.Tests
             Assert.DoesNotContain(client.Calls, c => c.StartsWith("unlink", StringComparison.Ordinal));
         }
 
+        private static Action<OdooSynchroniser> Reactivating
+            => s => { s.ArchiveInsteadOfDelete = true; s.ReactivateArchived = true; s.Fields = new() { ["ref"] = "ref", ["name"] = "name" }; s.OnlyMappedFields = true; };
+
+        [Fact]
+        public async Task ReactivateArchived_ReactivatesTheArchivedRecordFoundInTheSource_InsteadOfCreatingASecondOne()
+        {
+            var client = Odoo(out _, out _);
+            var archivedId = client.Seed("res.partner", new() { ["name"] = "Alice", ["ref"] = "C1", ["active"] = false });
+            var count = client.Data["res.partner"].Count;
+
+            var output = await Synchroniser(client, Reactivating).ActAsync([new Entity { ["ref"] = "C1", ["name"] = "Alice" }], TestContexts.Create(SyncMode.Mirror));
+
+            Assert.Equal(SyncResult.Updated, output.Single(e => e.GetString("ref") == "C1").SyncResult);
+            Assert.Equal(true, client.Record("res.partner", archivedId)["active"]);
+            Assert.Equal(count, client.Data["res.partner"].Count);
+            Assert.Contains($"write res.partner {archivedId} active", client.Calls);
+        }
+
+        [Fact]
+        public async Task ReactivateArchived_LeavesTheAlreadyArchivedRecordsAlone_AndArchivesTheOthers()
+        {
+            var client = Odoo(out _, out var obsoleteId);
+            var archivedId = client.Seed("res.partner", new() { ["name"] = "Ancien", ["ref"] = "C9", ["active"] = false });
+
+            var output = await Synchroniser(client, Reactivating).ActAsync([], TestContexts.Create(SyncMode.Mirror));
+
+            // Only the active record absent from the source is archived; the archived one is not written again.
+            Assert.Equal(obsoleteId.ToString(), Assert.Single(output, e => e.SyncResult == SyncResult.Deleted).Metadata[OdooSynchroniser.IdMetadataKey]);
+            Assert.Equal(false, client.Record("res.partner", obsoleteId)["active"]);
+            Assert.DoesNotContain(client.Calls, c => c.StartsWith($"write res.partner {archivedId}", StringComparison.Ordinal));
+        }
+
+        [Fact]
+        public async Task ReactivateArchived_WithAnActiveAndAnArchivedRecordOfTheSameKey_SynchronisesTheActiveOne()
+        {
+            var client = Odoo(out _, out _);
+            var archivedId = client.Seed("res.partner", new() { ["name"] = "Alice", ["ref"] = "C1", ["active"] = false });
+            var activeId = client.Seed("res.partner", new() { ["name"] = "Alice", ["ref"] = "C1" });
+
+            var output = await Synchroniser(client, Reactivating).ActAsync([new Entity { ["ref"] = "C1", ["name"] = "Alice" }], TestContexts.Create(SyncMode.Full));
+
+            Assert.Equal(SyncResult.Unchanged, output.Single().SyncResult);
+            Assert.Equal(activeId.ToString(), output.Single().Metadata[OdooSynchroniser.IdMetadataKey]);
+            Assert.Equal(false, client.Record("res.partner", archivedId)["active"]);
+        }
+
+        [Fact]
+        public async Task ReactivateArchived_WithoutArchiveInsteadOfDelete_IsAConfigurationError()
+        {
+            var client = Odoo(out _, out _);
+
+            await Assert.ThrowsAsync<OrtolanConfigurationException>(() => Synchroniser(client, s => s.ReactivateArchived = true).ActAsync([], TestContexts.Create(SyncMode.Mirror)));
+        }
+
         [Fact]
         public async Task DeleteAction_InIncrementalMode_UnlinksTheRecordFoundByItsKey()
         {
