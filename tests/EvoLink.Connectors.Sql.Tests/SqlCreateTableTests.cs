@@ -87,6 +87,17 @@ namespace EvoLink.Connectors.Sql.Tests
         }
 
         [Fact]
+        public async Task CreateTable_WithADelimitedOdooModelName_CreatesOneTableNamedAfterTheModel()
+        {
+            await Synchroniser(s => { s.Table = "[product.template]"; s.CreateTable = true; }).ActAsync(Products(), Context());
+
+            Assert.Equal(2, Rows("SELECT * FROM \"product.template\"").Count);
+
+            var second = await Synchroniser(s => { s.Table = "[product.template]"; s.CreateTable = true; }).ActAsync(Products(), Context());
+            Assert.All(second, e => Assert.Equal(SyncResult.Unchanged, e.SyncResult));
+        }
+
+        [Fact]
         public async Task AddMissingColumns_AddsTheNewFields_AndKeepsTheRows()
         {
             await Synchroniser(s => s.CreateTable = true).ActAsync(Products(), Context());

@@ -38,9 +38,66 @@ namespace EvoLink.Connectors.Sql
         public string ParameterName(int index)
             => PositionalParameters ? $"p{index}" : $"@p{index}";
 
-        /// <summary>Quotes an identifier ("schema.table" is quoted part by part).</summary>
+        /// <summary>
+        /// Quotes an identifier ("schema.table" is quoted part by part). A part already delimited ([res.partner], "x" or `x`)
+        /// is kept whole, so a table named after an Odoo model can be written "[res.partner]" or "dbo.[res.partner]".
+        /// </summary>
         public string Quote(string identifier)
-            => string.Join(".", identifier.Split('.').Select(QuotePart));
+            => string.Join(".", SplitParts(identifier).Select(QuotePart));
+
+        private static List<string> SplitParts(string identifier)
+        {
+            var parts = new List<string>();
+            var part = new System.Text.StringBuilder();
+            var i = 0;
+
+            while (i < identifier.Length)
+            {
+                var c = identifier[i];
+                var close = c switch { '[' => ']', '"' => '"', '`' => '`', _ => '\0' };
+
+                if (close != '\0' && part.Length == 0)
+                {
+                    // Delimited part: read up to the closing delimiter (doubled = escaped).
+                    i++;
+
+                    while (i < identifier.Length)
+                    {
+                        if (identifier[i] == close)
+                        {
+                            if (i + 1 < identifier.Length && identifier[i + 1] == close)
+                            {
+                                part.Append(close);
+                                i += 2;
+                                continue;
+                            }
+
+                            i++;
+                            break;
+                        }
+
+                        part.Append(identifier[i++]);
+                    }
+
+                    continue;
+                }
+
+                if (c == '.')
+                {
+                    parts.Add(part.ToString());
+                    part.Clear();
+                }
+                else
+                {
+                    part.Append(c);
+                }
+
+                i++;
+            }
+
+            parts.Add(part.ToString());
+            return parts;
+        }
 
         private string QuotePart(string part)
             => Engine switch

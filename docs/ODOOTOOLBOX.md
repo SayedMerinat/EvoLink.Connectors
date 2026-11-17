@@ -22,6 +22,7 @@ Deux façons de faire, avec le même comportement qu'OdooToolbox (l'échec d'un 
 - **Un service, un stage par modèle** : chaque stage a `"isolated": true` (nouveau flux) et `"continueOnFailure": true`.
   Les modèles sont exportés l'un après l'autre dans un seul job, qui se termine « avec erreurs » si un modèle a échoué.
   Voir « Stages isolés » dans `docs/ARCHITECTURE.md` d'Ortolan.
+- Exemple complet (7 modèles vers SMR) : `samples/services/odootosql-smr.json` d'Ortolan.
 - **Un service par modèle** (ci-dessous), abonnés au même événement planifié : chaque modèle a son propre rapport et sa
   propre politique de relance.
 
@@ -60,7 +61,7 @@ Correspondance de la configuration :
 | `odoo_url`, `odoo_db`, `odoo_username`, `odoo_password` | `url`, `database`, `username`, `apiKey` (de préférence `@vault:…`) |
 | `sql_server`, `sql_database`, `sql_user`, `sql_password`, `sql_additional` | `connectionString`, ex. `Server=SRV\\INSTANCE;Database=OdooToolbox;Integrated Security=true;TrustServerCertificate=true` |
 | `models[].name` | `model` |
-| `models[].sql_table_name` | `table` |
+| `models[].sql_table_name` | `table` ; sans `sql_table_name`, la table porte le nom du modèle : écrivez-le entre crochets, `"[res.partner]"` (ou `"dbo.[res.partner]"`), sinon `res.partner` est lu comme schéma `res`, table `partner` |
 | `models[].fields` | `readFields` (un champ inexistant est une erreur, au lieu d'être ignoré) |
 | `models[].limit: 0` | `limit: 0` (défaut), pagination par `id` |
 | `models[].limit: N` | `limit: N` **et** `order` = l'ordre du modèle (ex. `"priority desc, name"` pour `product.template`), **et** `"defaultMode": "Full"` (en Mirror, les lignes hors des N premiers seraient supprimées) |

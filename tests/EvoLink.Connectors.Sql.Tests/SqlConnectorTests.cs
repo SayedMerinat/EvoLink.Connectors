@@ -192,6 +192,15 @@ namespace EvoLink.Connectors.Sql.Tests
             Assert.Equal("@p3", new SqlDialect(SqlEngine.SqlServer).Parameter(3));
         }
 
+        [Theory]
+        [InlineData("[res.partner]", "[res.partner]")]
+        [InlineData("dbo.[sale.order.line]", "[dbo].[sale.order.line]")]
+        [InlineData("[dbo].[a]]b.c]", "[dbo].[a]]b.c]")]
+        [InlineData("\"res.partner\"", "[res.partner]")]
+        [InlineData("res.partner", "[res].[partner]")]
+        public void Dialect_KeepsDelimitedPartsWhole(string identifier, string expected)
+            => Assert.Equal(expected, new SqlDialect(SqlEngine.SqlServer).Quote(identifier));
+
         [Fact]
         public void Registry_ExposesTheModulesWithTheirConnectionStringSensitive()
         {
