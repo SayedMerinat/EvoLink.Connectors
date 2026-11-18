@@ -81,6 +81,9 @@ namespace EvoLink.Connectors.Odoo
         [Description("Format des relations : Id (many2one = identifiant, x2many = liste d'identifiants) ou OdooToolbox (texte \"[5, 'Nom']\" et \"[1, 2]\", liste vide = null, comme odootosql).")]
         public OdooRelationFormat RelationFormat { get; set; } = OdooRelationFormat.Id;
 
+        [Description("Format des autres valeurs : Native (valeurs d'Odoo) ou OdooToolbox (comme odootosql : listes et dictionnaires des champs json ou properties en représentation Python \"{'body': [...]}\", 0, texte vide et liste vide = null, booléens gardés).")]
+        public OdooValueFormat ValueFormat { get; set; } = OdooValueFormat.Native;
+
         [Description("Nouvelles tentatives d'une page en échec parce qu'Odoo est indisponible (502, réseau, délai dépassé). 0 = aucune.")]
         public int ReadRetries { get; set; }
 
@@ -183,9 +186,12 @@ namespace EvoLink.Connectors.Odoo
             foreach (var (field, value) in record)
             {
                 var type = modelFields.TryGetValue(field, out var info) ? info.Type : null;
-                values[field] = RelationFormat == OdooRelationFormat.OdooToolbox && OdooToolboxFormat.IsRelation(type)
-                    ? OdooToolboxFormat.FromOdoo(value, type)
-                    : OdooValues.FromOdooForEntity(value, type, timeZone);
+                if (RelationFormat == OdooRelationFormat.OdooToolbox && OdooToolboxFormat.IsRelation(type))
+                    values[field] = OdooToolboxFormat.FromOdoo(value, type);
+                else if (ValueFormat == OdooValueFormat.OdooToolbox && !OdooToolboxFormat.IsRelation(type) && field != "id")
+                    values[field] = OdooToolboxFormat.ValueFromOdoo(OdooValues.FromOdooForEntity(value, type, timeZone), type);
+                else
+                    values[field] = OdooValues.FromOdooForEntity(value, type, timeZone);
 
                 if (IncludeMany2OneNames && type == "many2one")
                     values[field + "_name"] = value is System.Collections.IList { Count: > 1 } pair ? pair[1] : null;

@@ -12,6 +12,7 @@ Les options utilisées ici sont toutes **désactivées par défaut** : un servic
 | `addMissingColumns` | `sql-synchroniser` | Ajoute les colonnes des champs ajoutés plus tard. Rien n'est jamais supprimé ni retypé. |
 | `columnTypes` | `sql-synchroniser` | Type SQL imposé par colonne, ex. `{ "date_start": "DATE", "list_price": "FLOAT(24)" }`. |
 | `relationFormat: "OdooToolbox"` | `odoo-provider` | Relations écrites comme odootosql : `[5, 'Nom']` (repr Python exacte), `[1, 2]`, null si vide. |
+| `valueFormat: "OdooToolbox"` | `odoo-provider` | Autres valeurs écrites comme odootosql : champs `json` / `properties` en repr Python (`{'body': [{'patch': '…', 'revision_id': 1}]}`), `0`, `0.0`, texte vide et liste vide = null. Les booléens restent `0` / `1`. |
 | `relationFormat: "OdooToolbox"` | `odoo-synchroniser` | Relations lues comme sqltoodoo : `[5, 'Nom']`, `[5]`, `(5,)`, `[1, 2]`, `1,2`. Un id brut reste accepté. |
 | `skipNullValues` | `odoo-synchroniser` | Une valeur NULL n'est ni comparée ni écrite : elle ne vide jamais un champ Odoo. À la création, Odoo applique sa valeur par défaut. |
 | `readRetries`, `readRetryDelaySeconds`, `shrinkPageOnError` | `odoo-provider`, `odoo-synchroniser` | Nouvelle tentative d'une page de lecture en échec (502, réseau, délai), avec une page deux fois plus petite à chaque fois (minimum 10). Les écritures ne sont jamais rejouées. |
@@ -43,11 +44,13 @@ Deux façons de faire, avec le même comportement qu'OdooToolbox (l'échec d'un 
         "pageSize": 1000,                                              // page_size
         "timeZone": "UTC",                                             // datetimes en UTC, comme OdooToolbox
         "relationFormat": "OdooToolbox",                               // many2one "[5, 'Nom']"
+        "valueFormat": "OdooToolbox",                                  // json en repr Python, 0 et vides = NULL
         "readRetries": 3 },
       { "$type": "sql-synchroniser",
         "engine": "SqlServer", "connectionString": "@vault:sql.toolbox",
         "table": "my_products",                                        // sql_table_name
         "createTable": true, "addMissingColumns": true,
+        "columnTypes": { "id": "INT", "list_price": "REAL" },          // types d'odootosql (voir plus bas)
         "useTransaction": true }                                       // les lecteurs voient l'ancienne table jusqu'au commit
     ] }
   ]
@@ -67,14 +70,28 @@ Correspondance de la configuration :
 | `models[].limit: N` | `limit: N` **et** `order` = l'ordre du modèle (ex. `"priority desc, name"` pour `product.template`), **et** `"defaultMode": "Full"` (en Mirror, les lignes hors des N premiers seraient supprimées) |
 | `models[].page_size` | `pageSize` |
 
-Ce qui change par rapport à odootosql, volontairement :
+### Même format qu'odootosql
+
+Pour qu'une table remplace celle d'odootosql sans changer les vues ou les scripts qui la lisent (ex. `v_SalesData`
+d'IABUFFER), il faut trois réglages :
+- `"relationFormat": "OdooToolbox"` et `"valueFormat": "OdooToolbox"` sur `odoo-provider`.
+- `columnTypes` sur `sql-synchroniser` : odootosql crée `INT` pour les champs integer, `REAL` pour les float et monetary,
+  `DATE` pour les date, `DATETIME2`, `BIT` et `NVARCHAR(MAX)` pour le reste. Sans `columnTypes`, Ortolan déduit `BIGINT`,
+  `DECIMAL(38, 10)` et `DATETIME2`. Une colonne `REAL` garde 7 chiffres significatifs, comme odootosql : la valeur est
+  comparée arrondie de la même façon, une ligne inchangée n'est donc pas réécrite.
+- Une table existante n'est jamais retypée : pour changer les types, recréez-la (ex. `SELECT TOP 0 * INTO … FROM` la
+  table d'odootosql, qui donne aussi le même ordre de colonnes).
+
+Exemple complet : `samples/services/odootosql-smr.json` d'Ortolan, dont les `columnTypes` reprennent le schéma d'IABUFFER.
+
+### Ce qui change par rapport à odootosql, volontairement
+
 - La table n'est jamais supprimée : les lignes sont créées, mises à jour ou supprimées par `id`. Si Odoo est injoignable,
   la table garde les données de la veille, et la politique de relance du service s'applique.
-- Les 0 restent 0 (pas NULL), le texte est stocké en Unicode (pas de `?`), les nombres gardent leur précision.
-- Les types de colonnes déduits sont `BIGINT`, `DECIMAL(38, 10)`, `BIT`, `DATETIME2`, `NVARCHAR(MAX)`. Pour retrouver
-  exactement le schéma d'odootosql, imposez-les dans `columnTypes` : `INT`, `FLOAT(24)`, `MONEY`, `DATE`.
+- Le texte est stocké en Unicode : odootosql remplaçait les caractères hors CP1252 (emoji, `→`, `ś`, espace fine) par
+  `?`, Ortolan les garde.
 - Une ligne refusée par SQL Server n'est pas perdue en silence : l'entité échoue, l'erreur est journalisée et comptée.
-- Les `json` / `properties` restent du JSON valide (pas la repr Python).
+- Sans `valueFormat: "OdooToolbox"`, les 0 restent 0 (pas NULL).
 
 Comportements identiques : enregistrements archivés exclus (`includeArchived: false`), langue de base (pas de `language`),
 datetimes en UTC (`timeZone: "UTC"`), relations au format `[5, 'Nom']`.

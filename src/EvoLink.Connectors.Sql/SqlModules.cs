@@ -530,7 +530,10 @@ namespace EvoLink.Connectors.Sql
                 TypeCode.Byte or TypeCode.Int16 or TypeCode.Int32 or TypeCode.Int64 or TypeCode.SByte or TypeCode.UInt16 or TypeCode.UInt32 or TypeCode.UInt64
                     => ValueConverter.ToInt64(value) ?? (ValueConverter.ToBoolean(value) is { } flag ? (flag ? 1L : 0L) : null),
                 TypeCode.Decimal => ValueConverter.ToDecimal(value),
-                TypeCode.Double or TypeCode.Single => ValueConverter.ToDecimal(value) is { } d ? (double)d : null,
+                TypeCode.Double => ValueConverter.ToDecimal(value) is { } d ? (double)d : null,
+                // A REAL column keeps 7 significant digits: the value is rounded as the column stores it (2018.71 is read back
+                // 2018.7099609375), otherwise every row would look modified at every run.
+                TypeCode.Single => ValueConverter.ToDecimal(value) is { } f ? (double)(float)f : null,
                 // A DATETIME column keeps no time zone: a local or UTC value is stored, then read back, without its kind. It is
                 // compared the same way, otherwise every row would look modified at every run.
                 TypeCode.DateTime => ValueConverter.ToDateTime(value) is { } dateTime ? DateTime.SpecifyKind(dateTime, DateTimeKind.Unspecified) : null,

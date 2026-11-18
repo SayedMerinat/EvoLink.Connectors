@@ -117,6 +117,37 @@ namespace EvoLink.Connectors.Sql.Tests
         }
 
         [SkippableFact]
+        public async Task OdootosqlColumnTypes_IntRealDate_AreNotRewrittenAtTheNextRun()
+        {
+            Skip.IfNot(_available, "SQL Server LocalDB indisponible sur cette machine.");
+
+            List<Entity> Products() =>
+            [
+                new() { ["id"] = 1L, ["list_price"] = 2018.71m, ["sequence"] = 12L, ["start_date"] = new DateTime(2024, 3, 1) },
+                new() { ["id"] = 2L, ["list_price"] = 123456.78m, ["sequence"] = null, ["start_date"] = null },
+            ];
+
+            void Configure(SqlSynchroniserModule s)
+            {
+                s.CreateTable = true;
+                s.ColumnTypes = new() { ["id"] = "INT", ["list_price"] = "REAL", ["sequence"] = "INT", ["start_date"] = "DATE" };
+            }
+
+            await Synchroniser(Configure).ActAsync(Products(), Context());
+            Assert.Equal(["id INT", "list_price REAL", "sequence INT", "start_date DATE"], Columns("dbo.my_products"));
+
+            // REAL keeps 7 significant digits: the value read back (2018.7099609375) must compare equal to 2018.71.
+            var second = await Synchroniser(Configure).ActAsync(Products(), Context());
+            Assert.All(second, e => Assert.Equal(SyncResult.Unchanged, e.SyncResult));
+
+            var changed = Products();
+            changed[0]["list_price"] = 2018.72m;
+            var third = await Synchroniser(Configure).ActAsync(changed, Context());
+            Assert.Equal(SyncResult.Updated, third.Single(e => e.GetString("id") == "1").SyncResult);
+            Assert.Equal(2018.72f, (float)Execute(_database, "SELECT list_price FROM dbo.my_products WHERE id = 1")!);
+        }
+
+        [SkippableFact]
         public async Task CreateTable_WithIdentity_OnSqlServer()
         {
             Skip.IfNot(_available, "SQL Server LocalDB indisponible sur cette machine.");

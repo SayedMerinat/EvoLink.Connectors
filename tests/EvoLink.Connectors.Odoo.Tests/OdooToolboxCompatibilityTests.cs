@@ -81,6 +81,96 @@ namespace EvoLink.Connectors.Odoo.Tests
             Assert.Equal(new List<object?> { 1L, 2L }, alice["category_id"]);
         }
 
+        [Fact]
+        public async Task Provider_OdooToolboxValues_WritesTheValuesAsOdootosql()
+        {
+            var client = Odoo();
+            client.Define("knowledge.article",
+                new OdooFieldInfo("id", "integer", Readonly: true),
+                new OdooFieldInfo("name", "char"),
+                new OdooFieldInfo("active", "boolean"),
+                new OdooFieldInfo("is_locked", "boolean"),
+                new OdooFieldInfo("sequence", "integer"),
+                new OdooFieldInfo("cover_image_position", "float"),
+                new OdooFieldInfo("deletion_date", "date"),
+                new OdooFieldInfo("html_field_history", "json"),
+                new OdooFieldInfo("article_properties", "properties"));
+
+            var history = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["body"] = new List<object?>
+                {
+                    new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
+                    {
+                        ["patch"] = "R@1:<h1 class=\"oe-hint\"><br>",
+                        ["create_uid"] = 6L,
+                        ["create_date"] = "2026-05-13T08:37:29.176800",
+                        ["revision_id"] = 1L,
+                        ["create_user_name"] = "Samuel Meige",
+                    },
+                },
+            };
+            var properties = new List<object?>
+            {
+                new Dictionary<string, object?> { ["name"] = "available", ["type"] = "boolean", ["view_in_cards"] = true, ["value"] = false },
+                new Dictionary<string, object?> { ["name"] = "total_surface", ["type"] = "float", ["value"] = 1.0, ["default"] = null },
+            };
+
+            client.Seed("knowledge.article", new() { ["name"] = "Logiciels", ["active"] = true, ["sequence"] = 3L, ["cover_image_position"] = 67.81, ["deletion_date"] = "2026-12-31", ["html_field_history"] = history, ["article_properties"] = properties }, id: 1085);
+            client.Seed("knowledge.article", new() { ["name"] = "", ["active"] = true, ["is_locked"] = false, ["sequence"] = 0L, ["cover_image_position"] = 0.0, ["html_field_history"] = new Dictionary<string, object?>(), ["article_properties"] = new List<object?>() }, id: 1086);
+
+            var output = await Provider(client, p => { p.Model = "knowledge.article"; p.RelationFormat = OdooRelationFormat.OdooToolbox; p.ValueFormat = OdooValueFormat.OdooToolbox; })
+                .ActAsync([], TestContexts.Create());
+
+            var full = output.Single(e => e.GetString("id") == "1085");
+            Assert.Equal("{'body': [{'patch': 'R@1:<h1 class=\"oe-hint\"><br>', 'create_uid': 6, 'create_date': '2026-05-13T08:37:29.176800', 'revision_id': 1, 'create_user_name': 'Samuel Meige'}]}", full["html_field_history"]);
+            Assert.Equal("[{'name': 'available', 'type': 'boolean', 'view_in_cards': True, 'value': False}, {'name': 'total_surface', 'type': 'float', 'value': 1.0, 'default': None}]", full["article_properties"]);
+            Assert.Equal(3L, full["sequence"]);
+            Assert.Equal(67.81m, full["cover_image_position"]);
+            Assert.Equal(new DateTime(2026, 12, 31), full["deletion_date"]);
+            Assert.Equal(true, full["active"]);
+
+            // The empty values of Python become null, booleans stay; the identifier is never emptied.
+            var empty = output.Single(e => e.GetString("id") == "1086");
+            Assert.Null(empty["name"]);
+            Assert.Null(empty["sequence"]);
+            Assert.Null(empty["cover_image_position"]);
+            Assert.Null(empty["deletion_date"]);
+            Assert.Null(empty["html_field_history"]);
+            Assert.Null(empty["article_properties"]);
+            Assert.Equal(false, empty["is_locked"]);
+            Assert.Equal(1086L, empty["id"]);
+        }
+
+        [Fact]
+        public async Task Provider_NativeValues_AreUnchanged()
+        {
+            var client = Odoo();
+            client.Seed("res.partner", new() { ["name"] = "Carl", ["ref"] = "C3", ["employees"] = 0L, ["credit_limit"] = 0.0 }, id: 12);
+
+            var carl = (await Provider(client, p => p.RelationFormat = OdooRelationFormat.OdooToolbox).ActAsync([], TestContexts.Create())).Single(e => e.GetString("ref") == "C3");
+
+            Assert.Equal(0L, carl["employees"]);
+            Assert.Equal(0m, carl["credit_limit"]);
+            Assert.Equal(false, carl["is_company"]);
+        }
+
+        [Theory]
+        [InlineData(1.0, "1.0")]
+        [InlineData(67.81, "67.81")]
+        [InlineData(-2.5, "-2.5")]
+        [InlineData(0.1 + 0.2, "0.30000000000000004")]
+        [InlineData(0.0001, "0.0001")]
+        [InlineData(0.00001, "1e-05")]
+        [InlineData(1.5e-7, "1.5e-07")]
+        [InlineData(1e15, "1000000000000000.0")]
+        [InlineData(1e16, "1e+16")]
+        [InlineData(1.5e16, "1.5e+16")]
+        [InlineData(123456789.125, "123456789.125")]
+        [InlineData(0.0, "0.0")]
+        public void ReprFloat_IsThePythonRepresentation(double value, string expected)
+            => Assert.Equal(expected, OdooToolboxFormat.ReprFloat(value));
+
         [Theory]
         [InlineData("Société", "'Société'")]
         [InlineData("L'été", "\"L'été\"")]
