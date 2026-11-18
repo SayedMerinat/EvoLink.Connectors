@@ -239,7 +239,8 @@ namespace EvoLink.Connectors.Odoo
         /// <summary>
         /// <see cref="ReactivateArchived"/>: an archived record is only useful when the source still has its key (it is then
         /// reactivated); the others are already archived and are left out, so that the mirror doesn't archive them again.
-        /// The active records come first: when an active and an archived record share a key, the active one is synchronised.
+        /// When an active and an archived record share a key, the active one is synchronised and the archived one is left out
+        /// (it is not a duplicate to delete with <c>DeleteTargetDuplicates</c>).
         /// </summary>
         private List<Entity> KeepUsefulArchived(List<Entity> target, JobContext context)
         {
@@ -251,7 +252,11 @@ namespace EvoLink.Connectors.Odoo
             bool IsArchived(Entity record) => record.GetValueOrDefault(_activeProperty!) is false;
 
             var archived = target.Where(IsArchived).ToList();
-            var kept = archived.Where(r => SyncComparer.ComputeKey(r, _keyProperties) is { } key && sourceKeys.Contains(key)).ToList();
+            var activeKeys = target.Where(r => !IsArchived(r))
+                .Select(r => SyncComparer.ComputeKey(r, _keyProperties))
+                .Where(k => k != null)
+                .ToHashSet(StringComparer.Ordinal);
+            var kept = archived.Where(r => SyncComparer.ComputeKey(r, _keyProperties) is { } key && sourceKeys.Contains(key) && !activeKeys.Contains(key)).ToList();
 
             if (archived.Count > 0)
                 context.LogInfo($"[{DisplayName}] {archived.Count} enregistrement(s) archivé(s) lu(s) : {kept.Count} présent(s) dans la source seront réactivés, les autres restent archivés.");

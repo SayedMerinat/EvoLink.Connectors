@@ -145,3 +145,15 @@ numéro fabricant ; seuls ceux présents dans l'export sont gardés.
 
 En `Mirror`, les enregistrements archivés ou supprimés repartent dans le flux après le synchroniser : un `filter` sur une
 propriété de la source (ex. `has-value` sur `DistributorPartNumber`) les retire avant les modules suivants.
+
+### Doublons dans Odoo
+
+Quand plusieurs enregistrements du périmètre ont la même clé, seul le premier lu (le plus petit `id`) est synchronisé ; les
+autres ne sont ni mis à jour ni supprimés, et leurs valeurs vieillissent. `"deleteTargetDuplicates": true` les supprime en
+mode `Mirror` (ou les archive avec `archiveInsteadOfDelete`). Avec `reactivateArchived`, un enregistrement archivé qui a la
+même clé qu'un actif n'est pas un doublon : il reste archivé, sans être réécrit.
+
+À activer seulement quand la clé identifie vraiment un enregistrement. Exemple : sur les entrées fournisseurs
+(`product.supplierinfo`, clé produit + fournisseur + code distributeur), les copies créées par un ancien import sont
+supprimées. Sur les produits, un même numéro fabricant peut désigner plusieurs produits de fabricants différents : l'option
+les archiverait.

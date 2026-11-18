@@ -180,6 +180,36 @@ namespace EvoLink.Connectors.Odoo.Tests
         }
 
         [Fact]
+        public async Task Mirror_WithDeleteTargetDuplicates_UnlinksTheExtraRecordsOfAKey()
+        {
+            var client = Odoo(out _, out _);
+            var firstId = client.Seed("res.partner", new() { ["name"] = "Alice", ["ref"] = "C1" });
+            var copyId = client.Seed("res.partner", new() { ["name"] = "Alice (copie)", ["ref"] = "C1" });
+
+            var output = await Synchroniser(client, s => { s.DeleteTargetDuplicates = true; s.Fields = new() { ["ref"] = "ref", ["name"] = "name" }; s.OnlyMappedFields = true; })
+                .ActAsync([new Entity { ["ref"] = "C1", ["name"] = "Alice" }], TestContexts.Create(SyncMode.Mirror));
+
+            Assert.Equal(firstId.ToString(), output.Single(e => e.GetString("ref") == "C1" && e.SyncResult == SyncResult.Unchanged).Metadata[OdooSynchroniser.IdMetadataKey]);
+            Assert.True(client.Data["res.partner"].ContainsKey(firstId));
+            Assert.False(client.Data["res.partner"].ContainsKey(copyId));
+        }
+
+        [Fact]
+        public async Task ReactivateArchived_WithDeleteTargetDuplicates_LeavesTheArchivedRecordOfAnActiveKeyAlone()
+        {
+            var client = Odoo(out _, out _);
+            var archivedId = client.Seed("res.partner", new() { ["name"] = "Alice", ["ref"] = "C1", ["active"] = false });
+            client.Seed("res.partner", new() { ["name"] = "Alice", ["ref"] = "C1" });
+
+            var output = await Synchroniser(client, s => { Reactivating(s); s.DeleteTargetDuplicates = true; })
+                .ActAsync([new Entity { ["ref"] = "C1", ["name"] = "Alice" }], TestContexts.Create(SyncMode.Mirror));
+
+            Assert.Equal(SyncResult.Unchanged, output.Single(e => e.GetString("ref") == "C1").SyncResult);
+            Assert.DoesNotContain(client.Calls, c => c.StartsWith($"write res.partner {archivedId}", StringComparison.Ordinal));
+            Assert.Equal(false, client.Record("res.partner", archivedId)["active"]);
+        }
+
+        [Fact]
         public async Task ReactivateArchived_WithoutArchiveInsteadOfDelete_IsAConfigurationError()
         {
             var client = Odoo(out _, out _);
