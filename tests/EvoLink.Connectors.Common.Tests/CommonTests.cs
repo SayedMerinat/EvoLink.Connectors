@@ -22,6 +22,31 @@ namespace EvoLink.Connectors.Common.Tests
         public void ToDateTime_AcceptsTheUsualFormats(string text)
             => Assert.Equal(new DateTime(2017, 6, 6), ValueConverter.ToDateTime(text));
 
+        /// <summary>
+        /// A date serialised then read back (checkpoint of a resumed job, JSON) is the same date: an UTC date is not converted
+        /// to the local time, otherwise the resumed job writes every date shifted by the UTC offset.
+        /// </summary>
+        [Fact]
+        public void ToDateTime_ASerialisedDate_IsReadBackUnchanged()
+        {
+            var utc = new DateTime(2024, 9, 11, 10, 2, 4, DateTimeKind.Utc);
+            var local = new DateTime(2024, 9, 11, 10, 2, 4, DateTimeKind.Local);
+            var unspecified = new DateTime(2024, 9, 11, 10, 2, 4);
+
+            foreach (var date in new[] { utc, local, unspecified })
+            {
+                var json = Newtonsoft.Json.JsonConvert.SerializeObject(date).Trim('"');
+                var read = ValueConverter.ToDateTime(json);
+
+                Assert.Equal(date, read);
+                Assert.Equal(date.Kind, read!.Value.Kind);
+            }
+
+            Assert.Equal(utc, ValueConverter.ToDateTime("2024-09-11T10:02:04Z"));
+            Assert.Equal(DateTimeKind.Utc, ValueConverter.ToDateTime("2024-09-11T10:02:04.0000000Z")!.Value.Kind);
+            Assert.Equal(DateTimeKind.Unspecified, ValueConverter.ToDateTime("2024-09-11 10:02:04")!.Value.Kind);
+        }
+
         [Fact]
         public void Conversions_ReturnNullInsteadOfThrowing()
         {

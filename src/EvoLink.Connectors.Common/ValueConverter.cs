@@ -127,10 +127,15 @@ namespace EvoLink.Connectors.Common
             if (string.IsNullOrEmpty(text))
                 return null;
 
-            if (DateTime.TryParseExact(text, DateFormats, CultureInfo.InvariantCulture, DateTimeStyles.AllowWhiteSpaces, out var exact))
+            // RoundtripKind gives back the date that was written: "…Z" stays a UTC date (as the DateTime serialised in the checkpoint
+            // of a resumed job) instead of being converted to the local time, which shifted every date of a resumed job by the
+            // UTC offset; "+01:00" is converted to the local time and a date without zone stays unspecified, as before.
+            const DateTimeStyles styles = DateTimeStyles.AllowWhiteSpaces | DateTimeStyles.RoundtripKind;
+
+            if (DateTime.TryParseExact(text, DateFormats, CultureInfo.InvariantCulture, styles, out var exact))
                 return exact;
 
-            return DateTime.TryParse(text, CultureInfo.InvariantCulture, DateTimeStyles.AllowWhiteSpaces, out var parsed) ? parsed : null;
+            return DateTime.TryParse(text, CultureInfo.InvariantCulture, styles, out var parsed) ? parsed : null;
         }
 
         /// <summary>
