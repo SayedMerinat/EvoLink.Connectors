@@ -190,13 +190,18 @@ namespace EvoLink.Connectors.Sql
             => RunAsync(async command =>
             {
                 var rows = new List<Dictionary<string, object?>>();
-                await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+
+                // SqlClient reads a row asynchronously by re-reading each value from its start at every network packet: a value
+                // of several MB (html_field_history of a knowledge.article: 285 MB) took hours. With SequentialAccess, ReadAsync
+                // stops at the start of the row and every value is read once, in the order of the columns.
+                var behavior = _factory is SqlClientFactory ? CommandBehavior.SequentialAccess : CommandBehavior.Default;
+                await using var reader = await command.ExecuteReaderAsync(behavior, cancellationToken);
 
                 while (await reader.ReadAsync(cancellationToken))
                 {
                     var row = new Dictionary<string, object?>(reader.FieldCount, StringComparer.OrdinalIgnoreCase);
                     for (var i = 0; i < reader.FieldCount; i++)
-                        row[reader.GetName(i)] = reader.IsDBNull(i) ? null : reader.GetValue(i);
+                        row[reader.GetName(i)] = await reader.IsDBNullAsync(i, cancellationToken) ? null : reader.GetValue(i);
 
                     rows.Add(row);
                 }

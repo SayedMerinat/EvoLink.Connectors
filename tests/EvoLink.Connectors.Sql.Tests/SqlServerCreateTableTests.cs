@@ -163,5 +163,30 @@ namespace EvoLink.Connectors.Sql.Tests
             Assert.Equal(["ID BIGINT", "OdooId BIGINT", "Nom NVARCHAR(MAX)"], Columns("dbo.Produit"));
             Assert.Equal(["1", "2"], output.Select(e => e.Metadata[SqlSynchroniserModule.IdMetadataKey]));
         }
+
+        /// <summary>
+        /// A value of several tens of MB (html_field_history of a knowledge.article reaches 285 MB) is read in one pass:
+        /// read asynchronously without SequentialAccess, SqlClient re-reads the value from its start at each network packet,
+        /// and the reading of the target took hours.
+        /// </summary>
+        [SkippableFact]
+        public async Task QueryAsync_LargeValue_IsReadQuickly()
+        {
+            Skip.IfNot(_available, "SQL Server LocalDB indisponible sur cette machine.");
+
+            const int length = 20_000_000;
+            Execute(_database, $"CREATE TABLE dbo.big (id INT, txt NVARCHAR(MAX), n INT); INSERT dbo.big VALUES (1, REPLICATE(CAST(N'é' AS nvarchar(max)), {length}), 7), (2, NULL, NULL)");
+
+            await using var gateway = new DbSqlGateway(SqlEngine.SqlServer, ConnectionString(_database), 120);
+            var watch = System.Diagnostics.Stopwatch.StartNew();
+            var rows = await gateway.QueryAsync("SELECT id, txt, n FROM dbo.big ORDER BY id", [], CancellationToken.None);
+            watch.Stop();
+
+            Assert.Equal(length, ((string)rows[0]["txt"]!).Length);
+            Assert.Equal(7, rows[0]["n"]);
+            Assert.Null(rows[1]["txt"]);
+            Assert.Null(rows[1]["n"]);
+            Assert.True(watch.Elapsed < TimeSpan.FromSeconds(10), $"Lecture de {length * 2 / 1_000_000} Mo en {watch.Elapsed.TotalSeconds:N1} s.");
+        }
     }
 }
